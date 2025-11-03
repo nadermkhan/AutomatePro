@@ -13,9 +13,10 @@ import cv2
 import numpy as np
 import re
 from collections import deque
+from difflib import SequenceMatcher
 
-
-
+# Optional: Set Tesseract path if not in PATH (Windows example)
+# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 class AdvancedRecorderGUI:
     def __init__(self, root):
@@ -24,7 +25,7 @@ class AdvancedRecorderGUI:
         self.root.geometry("900x800")
         
         pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 0.05  # Slightly faster
+        pyautogui.PAUSE = 0.05
         
         self.recording = False
         self.playing = False
@@ -106,7 +107,7 @@ class AdvancedRecorderGUI:
         ttk.Checkbutton(options_frame, text="MouseScroll", 
                        variable=self.record_scroll_var).grid(row=0, column=2, padx=5)
         
-        self.use_ocr_var = tk.BooleanVar(value=True)  # Enabled by default for context
+        self.use_ocr_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="OCR (Context Awareness)", 
                        variable=self.use_ocr_var).grid(row=1, column=0, padx=5)
         
@@ -272,7 +273,6 @@ class AdvancedRecorderGUI:
             screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
             img_np = np.array(screenshot)
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-
             _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             text = pytesseract.image_to_string(thresh, config='--psm 8 -c tessedit_char_whitelist=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,')
             
@@ -299,6 +299,97 @@ class AdvancedRecorderGUI:
         except Exception as e:
             self.log_error("OCR capture", e)
             return None
+
+    def _fuzzy_match(self, a, b, threshold=0.8):
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        ratio = SequenceMatcher(None, a.lower(), b.lower()).ratio()
+        return ratio >= threshold
+
+    def locate_text_on_screen(self, search_text, min_confidence=50):
+        if not search_text or len(search_text.strip()) < 2:
+            return None
+            
+        try:
+            screenshot = ImageGrab.grab()
+            img_np = np.array(screenshot)
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+
+            data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+            n_boxes = len(data['text'])
+            search_words = [w for w in search_text.split() if w]
+
+            if not search_words:
+                return None
+
+            # Try multi-word phrase first
+            for i in range(n_boxes - len(search_words) + 1):
+                matched = True
+                phrase_boxes = []
+                for j, word in enumerate(search_words):
+                    idx = i + j
+                    conf = int(data['conf'][idx])
+                    detected = data['text'][idx].strip()
+                    if conf < min_confidence or not detected:
+                        matched = False
+                        break
+                    if not self._fuzzy_match(word, detected, threshold=0.75):
+                        matched = False
+                        break
+                    phrase_boxes.append(idx)
+
+                if matched and phrase_boxes:
+                    # Calculate bounding box of full phrase
+                    lefts = [data['left'][idx] for idx in phrase_boxes]
+                    tops = [data['top'][idx] for idx in phrase_boxes]
+                    widths = [data['width'][idx] for idx in phrase_boxes]
+                    heights = [data['height'][idx] for idx in phrase_boxes]
+                    
+                    x1 = min(lefts)
+                    y1 = min(tops)
+                    x2 = max(lefts[i] + widths[i] for i in range(len(lefts)))
+                    y2 = max(tops[i] + heights[i] for i in range(len(tops)))
+                    
+                    x_center = (x1 + x2) // 2
+                    y_center = (y1 + y2) // 2
+                    return (x_center, y_center)
+
+            # Fallback: single word (first word)
+            first_word = search_words[0]
+            for i in range(n_boxes):
+                conf = int(data['conf'][i])
+                detected = data['text'][i].strip()
+                if conf >= min_confidence and detected and self._fuzzy_match(first_word, detected, threshold=0.8):
+                    x = data['left'][i] + data['width'][i] // 2
+                    y = data['top'][i] + data['height'][i] // 2
+                    return (x, y)
+
+            return None
+
+        except Exception as e:
+            self.log_error("Text location failed", e)
+            return None
+
+    def navigate_to_context_silently(self, context_info):
+        if not context_info or not self.use_ocr_var.get():
+            return False
+            
+        start_context = context_info.get('start_context', '').strip()
+        if not start_context:
+            return False
+            
+        location = self.locate_text_on_screen(start_context)
+        if location:
+            x, y = location
+            screen_w, screen_h = pyautogui.size()
+            x = max(10, min(screen_w - 10, x))
+            y = max(10, min(screen_h - 10, y))
+            pyautogui.moveTo(x, y, duration=0.3, tween=pyautogui.easeInOutQuad)
+            time.sleep(0.2)
+            return True
+        return False
             
     def toggle_recording(self):
         if not self.recording:
@@ -498,7 +589,7 @@ class AdvancedRecorderGUI:
                     self.last_copy_index = len(self.recorded_actions) - 1
 
                     def delayed_capture():
-                        time.sleep(0.6)  # Increased delay for Excel/web
+                        time.sleep(0.6)
                         new_clip = self.get_clipboard_safe()
                         if new_clip != self.clipboard_before_copy:
                             context = self.analyze_selection_context(new_clip)
@@ -637,45 +728,6 @@ class AdvancedRecorderGUI:
             action_count = len(self.recorded_actions)
         self.status_var.set(f"Recording stopped. {action_count} actions recorded.")
     
-    def find_text_on_page(self, search_text):
-        if not search_text or len(search_text.strip()) < 2:
-            return False
-            
-        try:
-            old_clipboard = self.get_clipboard_safe()
-            pyautogui.hotkey('ctrl', 'f')
-            time.sleep(0.5)
-            pyautogui.hotkey('ctrl', 'a')
-            time.sleep(0.1)
-            pyperclip.copy(search_text)
-            time.sleep(0.1)
-            pyautogui.hotkey('ctrl', 'v')
-            time.sleep(0.3)
-            pyautogui.press('enter')
-            time.sleep(0.4)
-            pyautogui.press('escape')
-            time.sleep(0.2)
-            if old_clipboard:
-                pyperclip.copy(old_clipboard)
-            return True
-        except Exception as e:
-            self.log_error("Find text on page", e)
-            try:
-                pyautogui.press('escape')
-            except:
-                pass
-            return False
-        
-    def smart_scroll_to_context(self, context_info):
-        if not context_info:
-            return
-        
-        start_context = context_info.get('start_context', '')
-        if start_context and len(start_context) > 10:
-            search_words = ' '.join(start_context.split()[:3])
-            self.find_text_on_page(search_words)
-            time.sleep(0.5)
-        
     def play_sequence(self):
         with self.action_lock:
             if not self.recorded_actions:
@@ -722,7 +774,6 @@ class AdvancedRecorderGUI:
                     
                     if action_type == 'click':
                         x, y = safe_coords(action['x'], action['y'])
-
                         pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
                         pyautogui.click()
                         text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
@@ -748,10 +799,13 @@ class AdvancedRecorderGUI:
                         
                         if self.smart_selection_var.get() and 'selection_context' in action:
                             context = action['selection_context']
-                            self.safe_update_status("Finding context for selection...")
+                            self.safe_update_status("Locating context silently...")
                             if context and 'start_context' in context:
-                                self.smart_scroll_to_context(context)
-                                time.sleep(0.5)
+                                found = self.navigate_to_context_silently(context)
+                                if found:
+                                    self.safe_update_status("Context located")
+                            time.sleep(0.3)
+                            
                             if context and context.get('words_count', 0) > 20:
                                 pyautogui.click(start_x, start_y)
                                 time.sleep(0.1)
