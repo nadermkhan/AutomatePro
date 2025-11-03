@@ -14,6 +14,9 @@ import numpy as np
 import re
 from collections import deque
 
+
+
+
 class AdvancedRecorderGUI:
     def __init__(self, root):
         self.root = root
@@ -21,7 +24,7 @@ class AdvancedRecorderGUI:
         self.root.geometry("900x800")
         
         pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 0.1
+        pyautogui.PAUSE = 0.05  # Slightly faster
         
         self.recording = False
         self.playing = False
@@ -103,8 +106,8 @@ class AdvancedRecorderGUI:
         ttk.Checkbutton(options_frame, text="MouseScroll", 
                        variable=self.record_scroll_var).grid(row=0, column=2, padx=5)
         
-        self.use_ocr_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="OCR", 
+        self.use_ocr_var = tk.BooleanVar(value=True)  # Enabled by default for context
+        ttk.Checkbutton(options_frame, text="OCR (Context Awareness)", 
                        variable=self.use_ocr_var).grid(row=1, column=0, padx=5)
         
         self.record_clipboard_var = tk.BooleanVar(value=True)
@@ -112,7 +115,7 @@ class AdvancedRecorderGUI:
                        variable=self.record_clipboard_var).grid(row=1, column=1, padx=5)
         
         self.smart_selection_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Smart Selection (Context-aware)", 
+        ttk.Checkbutton(options_frame, text="Smart Selection", 
                        variable=self.smart_selection_var).grid(row=1, column=2, padx=5)
         
         file_frame = ttk.LabelFrame(main_frame, text="File Operations", padding="10")
@@ -208,8 +211,7 @@ class AdvancedRecorderGUI:
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
         
-    def get_clipboard_safe(self):
-        max_retries = 3
+    def get_clipboard_safe(self, max_retries=5, delay=0.1):
         for attempt in range(max_retries):
             try:
                 content = pyperclip.paste()
@@ -218,7 +220,7 @@ class AdvancedRecorderGUI:
                 if attempt == max_retries - 1:
                     self.log_error("Clipboard access", e)
                     return ""
-                time.sleep(0.1)
+                time.sleep(delay)
         return ""
     
     def monitor_clipboard(self):
@@ -231,7 +233,7 @@ class AdvancedRecorderGUI:
                         self.clipboard_history.append(current_clipboard)
             except Exception as e:
                 self.log_error("Clipboard monitor", e)
-            time.sleep(0.3)
+            time.sleep(0.2)
     
     def analyze_selection_context(self, clipboard_content):
         if not clipboard_content:
@@ -259,6 +261,26 @@ class AdvancedRecorderGUI:
             'words_count': len(words)
         }
             
+    def capture_text_around_cursor(self, x, y, radius=50):
+        if not self.use_ocr_var.get():
+            return None
+            
+        try:
+            x1, y1 = max(0, x - radius), max(0, y - radius)
+            x2, y2 = x + radius, y + radius
+            
+            screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+            img_np = np.array(screenshot)
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            text = pytesseract.image_to_string(thresh, config='--psm 8 -c tessedit_char_whitelist=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,')
+            
+            return text.strip() if text.strip() else None
+        except Exception as e:
+            self.log_error("OCR around cursor", e)
+            return None
+
     def capture_text_at_selection(self, x1, y1, x2, y2):
         if not self.use_ocr_var.get():
             return None
@@ -270,7 +292,7 @@ class AdvancedRecorderGUI:
             screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
             img_np = np.array(screenshot)
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-            _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             text = pytesseract.image_to_string(thresh, config='--psm 6')
             
             return text.strip() if text.strip() else None
@@ -344,6 +366,10 @@ class AdvancedRecorderGUI:
                         'y': y,
                         'time': time.time()
                     }
+                    if self.use_ocr_var.get():
+                        text = self.capture_text_around_cursor(x, y)
+                        if text:
+                            action['element_text'] = text
                     self.add_action(action)
                 elif button == mouse.Button.middle:
                     action = {
@@ -352,6 +378,10 @@ class AdvancedRecorderGUI:
                         'y': y,
                         'time': time.time()
                     }
+                    if self.use_ocr_var.get():
+                        text = self.capture_text_around_cursor(x, y)
+                        if text:
+                            action['element_text'] = text
                     self.add_action(action)
                     
             else:
@@ -402,6 +432,10 @@ class AdvancedRecorderGUI:
                             'button': str(button),
                             'time': time.time()
                         }
+                        if self.use_ocr_var.get():
+                            text = self.capture_text_around_cursor(start_x, start_y)
+                            if text:
+                                action['element_text'] = text
                         self.add_action(action)
                 
                 self.mouse_pressed = False
@@ -443,10 +477,8 @@ class AdvancedRecorderGUI:
             if key == keyboard.Key.f9:
                 return
 
-            # Get virtual key code
             vk = getattr(key, 'vk', None)
 
-            # Handle modifiers
             if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r, keyboard.Key.ctrl]:
                 self.ctrl_pressed = True
                 return
@@ -457,7 +489,6 @@ class AdvancedRecorderGUI:
                 self.alt_pressed = True
                 return
 
-            # Handle Ctrl combos using vk codes (reliable across apps like Excel)
             if self.ctrl_pressed and vk is not None:
                 current_time = time.time()
                 if vk == 67:  # 'C'
@@ -467,7 +498,7 @@ class AdvancedRecorderGUI:
                     self.last_copy_index = len(self.recorded_actions) - 1
 
                     def delayed_capture():
-                        time.sleep(0.5)
+                        time.sleep(0.6)  # Increased delay for Excel/web
                         new_clip = self.get_clipboard_safe()
                         if new_clip != self.clipboard_before_copy:
                             context = self.analyze_selection_context(new_clip)
@@ -505,7 +536,7 @@ class AdvancedRecorderGUI:
                     self.add_action(action)
 
                     def capture_cut():
-                        time.sleep(0.5)
+                        time.sleep(0.6)
                         new_clip = self.get_clipboard_safe()
                         if new_clip != self.clipboard_before_copy:
                             with self.action_lock:
@@ -537,7 +568,6 @@ class AdvancedRecorderGUI:
                     self.add_action(action)
                     return
 
-            # Record normal keys (avoid non-printable chars)
             key_repr = None
             if hasattr(key, 'char') and key.char and key.char.isprintable():
                 key_repr = key.char
@@ -692,18 +722,25 @@ class AdvancedRecorderGUI:
                     
                     if action_type == 'click':
                         x, y = safe_coords(action['x'], action['y'])
-                        pyautogui.click(x, y)
-                        self.safe_update_status(f"Playing: Click at ({x}, {y})")
+
+                        pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
+                        pyautogui.click()
+                        text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
+                        self.safe_update_status(f"Playing: Click{text_info} at ({x}, {y})")
                         
                     elif action_type == 'right_click':
                         x, y = safe_coords(action['x'], action['y'])
-                        pyautogui.rightClick(x, y)
-                        self.safe_update_status(f"Playing: Right-click at ({x}, {y})")
+                        pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
+                        pyautogui.rightClick()
+                        text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
+                        self.safe_update_status(f"Playing: Right-click{text_info} at ({x}, {y})")
                         
                     elif action_type == 'middle_click':
                         x, y = safe_coords(action['x'], action['y'])
-                        pyautogui.middleClick(x, y)
-                        self.safe_update_status(f"Playing: Middle-click at ({x}, {y})")
+                        pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
+                        pyautogui.middleClick()
+                        text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
+                        self.safe_update_status(f"Playing: Middle-click{text_info} at ({x}, {y})")
                         
                     elif action_type == 'text_selection':
                         start_x, start_y = safe_coords(action['start_x'], action['start_y'])
@@ -721,18 +758,18 @@ class AdvancedRecorderGUI:
                                 pyautogui.click(clicks=3, interval=0.1)
                                 time.sleep(0.3)
                             else:
-                                pyautogui.moveTo(start_x, start_y, duration=0.1)
+                                pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
                                 pyautogui.mouseDown()
                                 time.sleep(0.05)
-                                pyautogui.moveTo(end_x, end_y, duration=0.2)
+                                pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
                                 time.sleep(0.05)
                                 pyautogui.mouseUp()
                                 time.sleep(0.1)
                         else:
-                            pyautogui.moveTo(start_x, start_y, duration=0.1)
+                            pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
                             pyautogui.mouseDown()
                             time.sleep(0.05)
-                            pyautogui.moveTo(end_x, end_y, duration=0.2)
+                            pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
                             time.sleep(0.05)
                             pyautogui.mouseUp()
                         
@@ -742,17 +779,17 @@ class AdvancedRecorderGUI:
                     elif action_type == 'selection':
                         start_x, start_y = safe_coords(action['start_x'], action['start_y'])
                         end_x, end_y = safe_coords(action['end_x'], action['end_y'])
-                        pyautogui.moveTo(start_x, start_y, duration=0.1)
+                        pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
                         pyautogui.mouseDown()
                         time.sleep(0.05)
-                        pyautogui.moveTo(end_x, end_y, duration=0.2)
+                        pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
                         time.sleep(0.05)
                         pyautogui.mouseUp()
                         self.safe_update_status("Playing: Selection/Drag")
                         
                     elif action_type == 'scroll':
                         x, y = safe_coords(action['x'], action['y'])
-                        pyautogui.moveTo(x, y)
+                        pyautogui.moveTo(x, y, duration=0.1)
                         scroll_amount = int(action['dy'] * 120)
                         pyautogui.scroll(scroll_amount)
                         self.safe_update_status("Playing: Scroll")
@@ -761,7 +798,7 @@ class AdvancedRecorderGUI:
                     elif action_type == 'copy':
                         pyautogui.hotkey('ctrl', 'c')
                         self.safe_update_status("Playing: Copy (Ctrl+C)")
-                        time.sleep(0.3)
+                        time.sleep(0.4)
                         
                     elif action_type == 'paste':
                         if 'clipboard_content' in action and action['clipboard_content']:
@@ -777,7 +814,7 @@ class AdvancedRecorderGUI:
                     elif action_type == 'cut':
                         pyautogui.hotkey('ctrl', 'x')
                         self.safe_update_status("Playing: Cut (Ctrl+X)")
-                        time.sleep(0.2)
+                        time.sleep(0.3)
                         
                     elif action_type == 'select_all':
                         pyautogui.hotkey('ctrl', 'a')
@@ -901,11 +938,20 @@ class AdvancedRecorderGUI:
             action_type = action.get('type', 'unknown')
             
             if action_type == 'click':
-                text = f"{i}. Click at ({action['x']}, {action['y']})\n"
+                text = f"{i}. Click at ({action['x']}, {action['y']})"
+                if 'element_text' in action:
+                    text += f" → '{action['element_text']}'"
+                text += "\n"
             elif action_type == 'right_click':
-                text = f"{i}. Right-click at ({action['x']}, {action['y']})\n"
+                text = f"{i}. Right-click at ({action['x']}, {action['y']})"
+                if 'element_text' in action:
+                    text += f" → '{action['element_text']}'"
+                text += "\n"
             elif action_type == 'middle_click':
-                text = f"{i}. Middle-click at ({action['x']}, {action['y']})\n"
+                text = f"{i}. Middle-click at ({action['x']}, {action['y']})"
+                if 'element_text' in action:
+                    text += f" → '{action['element_text']}'"
+                text += "\n"
             elif action_type == 'text_selection':
                 text = f"{i}. Text Selection from ({action['start_x']}, {action['start_y']}) to ({action['end_x']}, {action['end_y']})"
                 if 'copied_content' in action:
@@ -914,6 +960,9 @@ class AdvancedRecorderGUI:
                 if 'selection_context' in action:
                     context = action['selection_context']
                     text += f"\n    → Context: Start='{context.get('start_context', '')[:20]}...'"
+                if 'selected_text' in action:
+                    preview = action['selected_text'][:30] + '...' if len(action['selected_text']) > 30 else action['selected_text']
+                    text += f"\n    → OCR: '{preview}'"
                 text += "\n"
             elif action_type == 'selection':
                 text = f"{i}. Selection/Drag from ({action['start_x']}, {action['start_y']}) to ({action['end_x']}, {action['end_y']})\n"
