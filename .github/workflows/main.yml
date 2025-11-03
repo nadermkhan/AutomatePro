@@ -1,0 +1,135 @@
+name: Build and Release Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        pip install pytesseract
+        pip install numpy
+        pip install pynput
+        pip install pyperclip
+    
+    - name: Build EXE with PyInstaller
+      run: |
+        pyinstaller --onefile --windowed --name="AutomatePro" --add-data="*.py;." --hidden-import="pytesseract" --hidden-import="cv2" --hidden-import="tkinter" --hidden-import="pyperclip"  --hidden-import="pyautogui" main.py
+    
+    - name: Create Release Package
+      run: |
+        mkdir release-package
+        copy dist\AutomatePro.exe release-package\
+        
+        echo "For support or license keys, please contact the administrator." >> release-package\README.txt
+        
+        Compress-Archive -Path release-package\* -DestinationPath AutomatePro-Windows.zip
+    
+    - name: Get version info
+      id: version
+      run: |
+        if ("${{ github.ref }}" -match "refs/tags/(.+)") {
+          $version = $matches[1]
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "RELEASE_NAME=Release $version" >> $env:GITHUB_OUTPUT
+        } else {
+          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+          $version = "manual-${{ github.event.inputs.version || '1.0.0' }}-$timestamp"
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "RELEASE_NAME=Manual Build ${{ github.event.inputs.version || '1.0.0' }} ($timestamp)" >> $env:GITHUB_OUTPUT
+        }
+      shell: powershell
+    
+    - name: Create Release (for tags)
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          AutomatePro-Windows.zip
+          dist/AutomatePro.exe
+        body: |
+          ## AutomatePro GithubCLI build release exe
+          
+          ### License
+          This software codebase is licensed under MIT
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Create Release (for manual trigger)
+      uses: softprops/action-gh-release@v1
+      if: github.event_name == 'workflow_dispatch'
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        name: ${{ steps.version.outputs.RELEASE_NAME }}
+        files: |
+          AutomatePro-Windows.zip
+          dist/AutomatePro.exe
+        body: |
+          ## CSV LinkedIn URL Matcher - Manual Build
+          
+          **Build Type**: Manual trigger
+          **Version**: ${{ github.event.inputs.version || '1.0.0' }}
+          **Build Date**: ${{ github.run_started_at }}
+          
+          ### Downloads
+          - **Full Package (Recommended)**: `AutomatePro-Windows.zip` - Includes EXE and documentation
+          - **EXE Only**: `AutomatePro.exe` - Standalone executable
+          
+          ### Features
+          - Match LinkedIn URLs between two CSV files
+          - Licensed application with time-based activation
+          - User-friendly GUI interface
+          - Progress tracking and status updates
+          - Export matched results to CSV
+          
+          ### Installation
+          1. Download `AutomatePro-Windows.zip`
+          2. Extract the zip file to your desired location
+          3. Run `AutomatePro.exe`
+          4. Enter your license key when prompted
+          
+          ### System Requirements
+          - Windows 10 or later (64-bit recommended)
+          - No Python installation required
+          - Approximately 50MB free disk space
+          
+          ### Note
+          This is a manual build and may be a development version. For stable releases, please use tagged versions.
+        draft: false
+        prerelease: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: AutomatePro-${{ steps.version.outputs.VERSION }}
+        path: |
+          dist/AutomatePro.exe
+          AutomatePro-Windows.zip
