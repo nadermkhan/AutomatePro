@@ -35,6 +35,7 @@ jobs:
         pip install pynput
         pip install pyperclip
         pip install pyautogui
+        pip install opencv-python
     
     - name: Build EXE with PyInstaller
       run: |
