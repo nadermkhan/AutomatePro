@@ -28,10 +28,8 @@ class AdvancedRecorderGUI:
         self.recorded_actions = []
         self.action_queue = queue.Queue()
         
-
         self.action_lock = threading.Lock()
         
-
         self.mouse_pressed = False
         self.selection_start = None
         self.selection_end = None
@@ -40,7 +38,6 @@ class AdvancedRecorderGUI:
         self.drag_start_time = None
         self.scroll_before_selection = []
         
-
         self.current_combo = set()
         self.ctrl_pressed = False
         self.shift_pressed = False
@@ -49,25 +46,20 @@ class AdvancedRecorderGUI:
         self.combo_detected = False
         self.pending_combo_action = None
         
-
         self.last_clipboard = ""
         self.clipboard_before_copy = ""
         self.clipboard_history = deque(maxlen=10)
         self.selection_context = {}
         
-
         self.mouse_listener = None
         self.keyboard_listener = None
         
-
         self.context_actions = []
         self.last_action_time = 0
         self.last_copy_index = -1
         
-
         self.max_actions = 10000
         
-
         self.debug_mode = False
         self.error_log = []
         
@@ -178,34 +170,25 @@ class AdvancedRecorderGUI:
         self.setup_global_hotkey()
     
     def log_error(self, context, error):
-        
         error_msg = f"[{time.strftime('%H:%M:%S')}] {context}: {str(error)}"
         self.error_log.append(error_msg)
         if self.debug_mode:
             print(error_msg)
-        
-
         if len(self.error_log) > 100:
             self.error_log = self.error_log[-100:]
     
     def add_action(self, action):
-        
         with self.action_lock:
             self.recorded_actions.append(action)
-            
-
             if len(self.recorded_actions) > self.max_actions:
                 self.recorded_actions = self.recorded_actions[-self.max_actions:]
                 self.root.after(0, lambda: messagebox.showwarning(
                     "Warning", 
                     f"Action limit reached. Keeping last {self.max_actions} actions."
                 ))
-        
-
         self.root.after(0, self.update_sequence_display)
     
     def safe_update_status(self, message):
-        
         try:
             self.root.after(0, lambda: self.status_var.set(message))
         except Exception as e:
@@ -226,7 +209,6 @@ class AdvancedRecorderGUI:
         listener.start()
         
     def get_clipboard_safe(self):
-        
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -240,7 +222,6 @@ class AdvancedRecorderGUI:
         return ""
     
     def monitor_clipboard(self):
-        
         while self.recording:
             try:
                 current_clipboard = self.get_clipboard_safe()
@@ -253,7 +234,6 @@ class AdvancedRecorderGUI:
             time.sleep(0.3)
     
     def analyze_selection_context(self, clipboard_content):
-        
         if not clipboard_content:
             return None
             
@@ -267,7 +247,6 @@ class AdvancedRecorderGUI:
                 'words_count': len(words)
             }
         
-
         start_words = ' '.join(words[:min(5, len(words)//2)])
         end_words = ' '.join(words[max(-5, -len(words)//2):])
         
@@ -281,7 +260,6 @@ class AdvancedRecorderGUI:
         }
             
     def capture_text_at_selection(self, x1, y1, x2, y2):
-        
         if not self.use_ocr_var.get():
             return None
             
@@ -306,31 +284,6 @@ class AdvancedRecorderGUI:
         else:
             self.stop_recording()
     
-    def get_key_char(self, key):
-        
-
-        if hasattr(key, 'char') and key.char:
-            return key.char.lower()
-        
-
-        if hasattr(key, 'vk'):
-
-            if 65 <= key.vk <= 90:
-                return chr(key.vk).lower()
-
-            elif 48 <= key.vk <= 57:
-                return chr(key.vk)
-        
-
-        try:
-            key_str = str(key).replace("Key.", "").strip("'\"")
-            if len(key_str) == 1:
-                return key_str.lower()
-        except:
-            pass
-        
-        return None
-            
     def start_recording(self):
         self.recording = True
         self.record_btn.config(text="⏹ Stop Recording")
@@ -344,7 +297,6 @@ class AdvancedRecorderGUI:
             self.recorded_actions = []
         self.update_sequence_display()
         
-
         self.mouse_pressed = False
         self.selection_start = None
         self.selection_end = None
@@ -365,7 +317,6 @@ class AdvancedRecorderGUI:
         self.last_clipboard = self.get_clipboard_safe()
         self.clipboard_before_copy = self.last_clipboard
         
-
         clipboard_thread = threading.Thread(target=self.monitor_clipboard, daemon=True)
         clipboard_thread.start()
         
@@ -489,162 +440,136 @@ class AdvancedRecorderGUI:
         def on_key_press(key):
             if not self.recording or not self.record_keyboard_var.get():
                 return
-                
             if key == keyboard.Key.f9:
                 return
-            
 
+            # Get virtual key code
+            vk = getattr(key, 'vk', None)
+
+            # Handle modifiers
             if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r, keyboard.Key.ctrl]:
                 self.ctrl_pressed = True
-                self.current_combo.add('ctrl')
                 return
-            elif key in [keyboard.Key.shift, keyboard.Key.shift_r, keyboard.Key.shift_l]:
+            elif key in [keyboard.Key.shift_l, keyboard.Key.shift_r, keyboard.Key.shift]:
                 self.shift_pressed = True
-                self.current_combo.add('shift')
                 return
             elif key in [keyboard.Key.alt_l, keyboard.Key.alt_r, keyboard.Key.alt, keyboard.Key.alt_gr]:
                 self.alt_pressed = True
-                self.current_combo.add('alt')
                 return
-            
 
-            if self.ctrl_pressed:
-                key_char = self.get_key_char(key)
-                
-                if key_char:
-                    self.combo_detected = True
-                    
-                    if key_char == 'c':
+            # Handle Ctrl combos using vk codes (reliable across apps like Excel)
+            if self.ctrl_pressed and vk is not None:
+                current_time = time.time()
+                if vk == 67:  # 'C'
+                    self.clipboard_before_copy = self.get_clipboard_safe()
+                    action = {'type': 'copy', 'time': current_time}
+                    self.add_action(action)
+                    self.last_copy_index = len(self.recorded_actions) - 1
 
-                        self.clipboard_before_copy = self.get_clipboard_safe()
-                        
-                        action = {
-                            'type': 'copy',
-                            'time': time.time()
-                        }
-                        self.add_action(action)
-                        with self.action_lock:
-                            self.last_copy_index = len(self.recorded_actions) - 1
-                        
-                        def capture_copied_content():
-                            time.sleep(0.4)  # Increased delay for reliability
-                            try:
-                                new_clipboard = self.get_clipboard_safe()
-                                if new_clipboard and new_clipboard != self.clipboard_before_copy:
-                                    context = self.analyze_selection_context(new_clipboard)
-                                    
-                                    with self.action_lock:
-                                        if 0 <= self.last_copy_index < len(self.recorded_actions):
-                                            self.recorded_actions[self.last_copy_index]['copied_content'] = new_clipboard
-                                            self.recorded_actions[self.last_copy_index]['selection_context'] = context
-                                            
+                    def delayed_capture():
+                        time.sleep(0.5)
+                        new_clip = self.get_clipboard_safe()
+                        if new_clip != self.clipboard_before_copy:
+                            context = self.analyze_selection_context(new_clip)
+                            with self.action_lock:
+                                if 0 <= self.last_copy_index < len(self.recorded_actions):
+                                    self.recorded_actions[self.last_copy_index].update({
+                                        'copied_content': new_clip,
+                                        'selection_context': context
+                                    })
+                                    for i in range(self.last_copy_index - 1, max(-1, self.last_copy_index - 6), -1):
+                                        if self.recorded_actions[i].get('type') == 'text_selection':
+                                            self.recorded_actions[i].update({
+                                                'copied_content': new_clip,
+                                                'selection_context': context
+                                            })
+                                            break
+                            self.root.after(0, self.update_sequence_display)
 
-                                            for i in range(self.last_copy_index - 1, max(0, self.last_copy_index - 5), -1):
-                                                if self.recorded_actions[i].get('type') == 'text_selection':
-                                                    self.recorded_actions[i]['copied_content'] = new_clipboard
-                                                    self.recorded_actions[i]['selection_context'] = context
-                                                    break
-                                    
-                                    self.root.after(0, self.update_sequence_display)
-                            except Exception as e:
-                                self.log_error("Capture copied content", e)
-                        
-                        threading.Thread(target=capture_copied_content, daemon=True).start()
-                        return
-                        
-                    elif key_char == 'v':
+                    threading.Thread(target=delayed_capture, daemon=True).start()
+                    return
 
-                        clipboard_content = self.get_clipboard_safe()
-                        
-                        action = {
-                            'type': 'paste',
-                            'time': time.time(),
-                            'clipboard_content': clipboard_content  # Always save content
-                        }
-                        
-                        if self.debug_mode and clipboard_content:
-                            print(f"Paste action recorded with content: {clipboard_content[:50]}...")
-                        
-                        self.add_action(action)
-                        return
-                        
-                    elif key_char == 'x':
-
-                        self.clipboard_before_copy = self.get_clipboard_safe()
-                        action = {'type': 'cut', 'time': time.time()}
-                        self.add_action(action)
-                        
-
-                        def capture_cut_content():
-                            time.sleep(0.4)
-                            try:
-                                new_clipboard = self.get_clipboard_safe()
-                                if new_clipboard and new_clipboard != self.clipboard_before_copy:
-                                    with self.action_lock:
-                                        if self.recorded_actions and self.recorded_actions[-1].get('type') == 'cut':
-                                            self.recorded_actions[-1]['cut_content'] = new_clipboard
-                                    self.root.after(0, self.update_sequence_display)
-                            except Exception as e:
-                                self.log_error("Capture cut content", e)
-                        
-                        threading.Thread(target=capture_cut_content, daemon=True).start()
-                        return
-                        
-                    elif key_char == 'a':
-                        action = {'type': 'select_all', 'time': time.time()}
-                        self.add_action(action)
-                        return
-                        
-                    elif key_char == 'z':
-                        action = {'type': 'undo', 'time': time.time()}
-                        self.add_action(action)
-                        return
-                        
-                    elif key_char == 'y':
-                        action = {'type': 'redo', 'time': time.time()}
-                        self.add_action(action)
-                        return
-                        
-                    elif key_char == 's':
-                        action = {'type': 'save', 'time': time.time()}
-                        self.add_action(action)
-                        return
-                        
-                    elif key_char == 'f':
-                        action = {'type': 'find', 'time': time.time()}
-                        self.add_action(action)
-                        return
-            
-
-            if not self.combo_detected:
-                try:
-                    key_value = key.char if hasattr(key, 'char') and key.char else str(key)
+                elif vk == 86:  # 'V'
+                    clipboard_content = self.get_clipboard_safe()
                     action = {
-                        'type': 'key',
-                        'key': key_value,
-                        'ctrl': self.ctrl_pressed,
-                        'shift': self.shift_pressed,
-                        'alt': self.alt_pressed,
-                        'time': time.time()
+                        'type': 'paste',
+                        'time': current_time,
+                        'clipboard_content': clipboard_content
                     }
                     self.add_action(action)
-                except AttributeError:
-                    pass
-                
+                    return
+
+                elif vk == 88:  # 'X'
+                    self.clipboard_before_copy = self.get_clipboard_safe()
+                    action = {'type': 'cut', 'time': current_time}
+                    self.add_action(action)
+
+                    def capture_cut():
+                        time.sleep(0.5)
+                        new_clip = self.get_clipboard_safe()
+                        if new_clip != self.clipboard_before_copy:
+                            with self.action_lock:
+                                if self.recorded_actions and self.recorded_actions[-1]['type'] == 'cut':
+                                    self.recorded_actions[-1]['cut_content'] = new_clip
+                            self.root.after(0, self.update_sequence_display)
+
+                    threading.Thread(target=capture_cut, daemon=True).start()
+                    return
+
+                elif vk == 65:  # 'A'
+                    action = {'type': 'select_all', 'time': current_time}
+                    self.add_action(action)
+                    return
+                elif vk == 90:  # 'Z'
+                    action = {'type': 'undo', 'time': current_time}
+                    self.add_action(action)
+                    return
+                elif vk == 89:  # 'Y'
+                    action = {'type': 'redo', 'time': current_time}
+                    self.add_action(action)
+                    return
+                elif vk == 83:  # 'S'
+                    action = {'type': 'save', 'time': current_time}
+                    self.add_action(action)
+                    return
+                elif vk == 70:  # 'F'
+                    action = {'type': 'find', 'time': current_time}
+                    self.add_action(action)
+                    return
+
+            # Record normal keys (avoid non-printable chars)
+            key_repr = None
+            if hasattr(key, 'char') and key.char and key.char.isprintable():
+                key_repr = key.char
+            elif hasattr(key, 'name'):
+                key_repr = key.name
+            elif vk is not None:
+                if 65 <= vk <= 90:
+                    key_repr = chr(vk).lower()
+                elif 48 <= vk <= 57:
+                    key_repr = chr(vk)
+
+            if key_repr:
+                action = {
+                    'type': 'key',
+                    'key': key_repr,
+                    'ctrl': self.ctrl_pressed,
+                    'shift': self.shift_pressed,
+                    'alt': self.alt_pressed,
+                    'time': time.time()
+                }
+                self.add_action(action)
+
         def on_key_release(key):
             if not self.recording:
                 return
             
             if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r, keyboard.Key.ctrl]:
                 self.ctrl_pressed = False
-                self.current_combo.discard('ctrl')
-                self.combo_detected = False
             elif key in [keyboard.Key.shift, keyboard.Key.shift_r, keyboard.Key.shift_l]:
                 self.shift_pressed = False
-                self.current_combo.discard('shift')
             elif key in [keyboard.Key.alt_l, keyboard.Key.alt_r, keyboard.Key.alt, keyboard.Key.alt_gr]:
                 self.alt_pressed = False
-                self.current_combo.discard('alt')
                 
         self.mouse_listener = mouse.Listener(
             on_click=on_click,
@@ -683,50 +608,35 @@ class AdvancedRecorderGUI:
         self.status_var.set(f"Recording stopped. {action_count} actions recorded.")
     
     def find_text_on_page(self, search_text):
-        
         if not search_text or len(search_text.strip()) < 2:
             return False
             
         try:
-
             old_clipboard = self.get_clipboard_safe()
-            
-
             pyautogui.hotkey('ctrl', 'f')
             time.sleep(0.5)
-            
-
             pyautogui.hotkey('ctrl', 'a')
             time.sleep(0.1)
-            
             pyperclip.copy(search_text)
             time.sleep(0.1)
             pyautogui.hotkey('ctrl', 'v')
             time.sleep(0.3)
-            
-
             pyautogui.press('enter')
             time.sleep(0.4)
-            
-
             pyautogui.press('escape')
             time.sleep(0.2)
-            
-
             if old_clipboard:
                 pyperclip.copy(old_clipboard)
-            
             return True
         except Exception as e:
             self.log_error("Find text on page", e)
             try:
-                pyautogui.press('escape')  # Ensure dialog closes
+                pyautogui.press('escape')
             except:
                 pass
             return False
         
     def smart_scroll_to_context(self, context_info):
-        
         if not context_info:
             return
         
@@ -758,11 +668,12 @@ class AdvancedRecorderGUI:
             speed = self.speed_var.get()
             prev_time = None
             
+            screen_width, screen_height = pyautogui.size()
+            
             for i, action in enumerate(actions_to_play):
                 if not self.playing:
                     break
                     
-
                 if prev_time:
                     delay = (action['time'] - prev_time) / speed
                     delay = min(delay, 10)
@@ -774,88 +685,91 @@ class AdvancedRecorderGUI:
                 try:
                     action_type = action['type']
                     
+                    def safe_coords(x, y):
+                        x = max(0, min(screen_width - 1, x))
+                        y = max(0, min(screen_height - 1, y))
+                        return int(x), int(y)
+                    
                     if action_type == 'click':
-                        pyautogui.click(action['x'], action['y'])
-                        self.safe_update_status(f"Playing: Click at ({action['x']}, {action['y']})")
+                        x, y = safe_coords(action['x'], action['y'])
+                        pyautogui.click(x, y)
+                        self.safe_update_status(f"Playing: Click at ({x}, {y})")
                         
                     elif action_type == 'right_click':
-                        pyautogui.rightClick(action['x'], action['y'])
-                        self.safe_update_status(f"Playing: Right-click at ({action['x']}, {action['y']})")
+                        x, y = safe_coords(action['x'], action['y'])
+                        pyautogui.rightClick(x, y)
+                        self.safe_update_status(f"Playing: Right-click at ({x}, {y})")
                         
                     elif action_type == 'middle_click':
-                        pyautogui.middleClick(action['x'], action['y'])
-                        self.safe_update_status(f"Playing: Middle-click at ({action['x']}, {action['y']})")
+                        x, y = safe_coords(action['x'], action['y'])
+                        pyautogui.middleClick(x, y)
+                        self.safe_update_status(f"Playing: Middle-click at ({x}, {y})")
                         
                     elif action_type == 'text_selection':
+                        start_x, start_y = safe_coords(action['start_x'], action['start_y'])
+                        end_x, end_y = safe_coords(action['end_x'], action['end_y'])
+                        
                         if self.smart_selection_var.get() and 'selection_context' in action:
                             context = action['selection_context']
                             self.safe_update_status("Finding context for selection...")
-                            
-
                             if context and 'start_context' in context:
                                 self.smart_scroll_to_context(context)
                                 time.sleep(0.5)
-                            
-
                             if context and context.get('words_count', 0) > 20:
-
-                                pyautogui.click(action['start_x'], action['start_y'])
+                                pyautogui.click(start_x, start_y)
                                 time.sleep(0.1)
-                                
-
                                 pyautogui.click(clicks=3, interval=0.1)
                                 time.sleep(0.3)
                             else:
-
-                                pyautogui.click(action['start_x'], action['start_y'])
-                                time.sleep(0.15)
-                                
-                                pyautogui.keyDown('shift')
+                                pyautogui.moveTo(start_x, start_y, duration=0.1)
+                                pyautogui.mouseDown()
                                 time.sleep(0.05)
-                                pyautogui.click(action['end_x'], action['end_y'])
+                                pyautogui.moveTo(end_x, end_y, duration=0.2)
                                 time.sleep(0.05)
-                                pyautogui.keyUp('shift')
+                                pyautogui.mouseUp()
                                 time.sleep(0.1)
                         else:
-
-                            pyautogui.moveTo(action['start_x'], action['start_y'])
-                            time.sleep(0.1)
-                            duration = max(0.3, action.get('duration', 0.5) / speed)
-                            pyautogui.dragTo(action['end_x'], action['end_y'], 
-                                            duration=duration, button='left')
+                            pyautogui.moveTo(start_x, start_y, duration=0.1)
+                            pyautogui.mouseDown()
+                            time.sleep(0.05)
+                            pyautogui.moveTo(end_x, end_y, duration=0.2)
+                            time.sleep(0.05)
+                            pyautogui.mouseUp()
                         
                         self.safe_update_status("Playing: Text selection")
-                        time.sleep(0.2)  # Give time for selection to register
+                        time.sleep(0.2)
                         
                     elif action_type == 'selection':
-                        pyautogui.moveTo(action['start_x'], action['start_y'])
-                        duration = 0.5 / speed
-                        pyautogui.dragTo(action['end_x'], action['end_y'], duration=duration)
+                        start_x, start_y = safe_coords(action['start_x'], action['start_y'])
+                        end_x, end_y = safe_coords(action['end_x'], action['end_y'])
+                        pyautogui.moveTo(start_x, start_y, duration=0.1)
+                        pyautogui.mouseDown()
+                        time.sleep(0.05)
+                        pyautogui.moveTo(end_x, end_y, duration=0.2)
+                        time.sleep(0.05)
+                        pyautogui.mouseUp()
                         self.safe_update_status("Playing: Selection/Drag")
                         
                     elif action_type == 'scroll':
-                        pyautogui.moveTo(action['x'], action['y'])
+                        x, y = safe_coords(action['x'], action['y'])
+                        pyautogui.moveTo(x, y)
                         scroll_amount = int(action['dy'] * 120)
                         pyautogui.scroll(scroll_amount)
                         self.safe_update_status("Playing: Scroll")
                         time.sleep(0.05)
                         
                     elif action_type == 'copy':
-                        if 'selection_context' in action:
-                            self.safe_update_status("Playing: Copy with context")
                         pyautogui.hotkey('ctrl', 'c')
                         self.safe_update_status("Playing: Copy (Ctrl+C)")
                         time.sleep(0.3)
                         
                     elif action_type == 'paste':
-
                         if 'clipboard_content' in action and action['clipboard_content']:
                             try:
                                 pyperclip.copy(action['clipboard_content'])
                                 time.sleep(0.2)
                             except Exception as e:
                                 self.log_error("Set clipboard for paste", e)
-                        
                         pyautogui.hotkey('ctrl', 'v')
                         self.safe_update_status("Playing: Paste (Ctrl+V)")
                         time.sleep(0.3)
@@ -897,7 +811,6 @@ class AdvancedRecorderGUI:
                         
                     elif action_type == 'key':
                         key = action['key']
-                        
                         if key.startswith('Key.'):
                             key_name = key.replace('Key.', '')
                             if key_name in ['space', 'enter', 'tab', 'backspace', 'delete', 
@@ -907,7 +820,6 @@ class AdvancedRecorderGUI:
                                     key_name = 'escape'
                                 pyautogui.press(key_name)
                         else:
-
                             modifiers = []
                             if action.get('ctrl'):
                                 modifiers.append('ctrl')
@@ -981,7 +893,6 @@ class AdvancedRecorderGUI:
                 messagebox.showerror("Error", f"Failed to load: {str(e)}")
                 
     def update_sequence_display(self):
-        
         self.sequence_text.delete('1.0', tk.END)
         with self.action_lock:
             actions_copy = self.recorded_actions.copy()
