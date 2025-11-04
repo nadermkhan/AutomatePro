@@ -15,14 +15,11 @@ import re
 from collections import deque
 from difflib import SequenceMatcher
 
-# Optional: Set Tesseract path if not in PATH (Windows example)
-# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
 class AdvancedRecorderGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("AutomatePro for Chandan Chakraborty")
-        self.root.geometry("900x850")
+        self.root.title("AutomatePro - Smart Context-Aware Mode")
+        self.root.geometry("900x900")
         
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.05
@@ -60,12 +57,20 @@ class AdvancedRecorderGUI:
         
         self.context_actions = []
         self.last_action_time = 0
-        self.copy_action_id = 0  # Unique ID for copy actions
+        self.copy_action_id = 0
         
         self.max_actions = 10000
         
         self.debug_mode = False
         self.error_log = []
+        
+        # Smart Context Detection
+        self.current_context = "mixed"  # "excel", "absolute", "mixed"
+        self.last_arrow_key_time = 0
+        self.arrow_key_count = 0
+        self.last_copy_paste_time = 0
+        self.context_switch_times = deque(maxlen=5)
+        self.recent_actions = deque(maxlen=20)
         
         self.setup_gui()
         
@@ -73,12 +78,20 @@ class AdvancedRecorderGUI:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        title_label = ttk.Label(main_frame, text="AutomatePro", 
+        title_label = ttk.Label(main_frame, text="AutomatePro - Dynamic Clipboard Mode", 
                                font=('Arial', 16, 'bold'))
         title_label.grid(row=0, column=0, columnspan=4, pady=10)
         
+        # Context indicator
+        context_frame = ttk.Frame(main_frame)
+        context_frame.grid(row=1, column=0, columnspan=4, pady=5)
+        ttk.Label(context_frame, text="Current Context:", font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
+        self.context_label = ttk.Label(context_frame, text="MIXED", 
+                                       font=('Arial', 10), foreground='blue')
+        self.context_label.pack(side=tk.LEFT, padx=5)
+        
         control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="10")
-        control_frame.grid(row=1, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
+        control_frame.grid(row=2, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
         
         self.record_btn = ttk.Button(control_frame, text="Start Recording", 
                                      command=self.toggle_recording, width=20)
@@ -96,7 +109,6 @@ class AdvancedRecorderGUI:
                                     command=self.clear_sequence, width=20)
         self.clear_btn.grid(row=0, column=3, padx=5, pady=5)
         
-        # Loop settings
         loop_frame = ttk.Frame(control_frame)
         loop_frame.grid(row=1, column=0, columnspan=4, pady=(10,0))
         ttk.Label(loop_frame, text="Repeat:").pack(side=tk.LEFT)
@@ -104,8 +116,8 @@ class AdvancedRecorderGUI:
         ttk.Spinbox(loop_frame, from_=1, to=100, width=5, textvariable=self.loop_count_var).pack(side=tk.LEFT, padx=5)
         ttk.Label(loop_frame, text="times").pack(side=tk.LEFT)
         
-        options_frame = ttk.LabelFrame(main_frame, text="Recording Options", padding="10")
-        options_frame.grid(row=2, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        options_frame = ttk.LabelFrame(main_frame, text="Smart Detection Options", padding="10")
+        options_frame.grid(row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         self.record_keyboard_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Keyboard", 
@@ -116,23 +128,29 @@ class AdvancedRecorderGUI:
                        variable=self.record_mouse_var).grid(row=0, column=1, padx=5)
         
         self.record_scroll_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="MouseScroll", 
+        ttk.Checkbutton(options_frame, text="Scroll", 
                        variable=self.record_scroll_var).grid(row=0, column=2, padx=5)
         
-        self.use_ocr_var = tk.BooleanVar(value=False)  # Disabled by default for performance
-        ttk.Checkbutton(options_frame, text="OCR (Context Awareness)", 
-                       variable=self.use_ocr_var).grid(row=1, column=0, padx=5)
+        self.smart_context_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(options_frame, text="🧠 Auto-Detect Context (Excel/Absolute)", 
+                       variable=self.smart_context_var,
+                       command=self.toggle_smart_mode).grid(row=1, column=0, padx=5, columnspan=2)
         
         self.record_clipboard_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Clipboard", 
-                       variable=self.record_clipboard_var).grid(row=1, column=1, padx=5)
+                       variable=self.record_clipboard_var).grid(row=1, column=2, padx=5)
         
-        self.smart_selection_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Smart Selection", 
-                       variable=self.smart_selection_var).grid(row=1, column=2, padx=5)
+        # Context detection sensitivity
+        sensitivity_frame = ttk.Frame(options_frame)
+        sensitivity_frame.grid(row=2, column=0, columnspan=3, pady=5)
+        ttk.Label(sensitivity_frame, text="Excel Detection Sensitivity:").pack(side=tk.LEFT, padx=5)
+        self.sensitivity_var = tk.IntVar(value=2)
+        ttk.Scale(sensitivity_frame, from_=1, to=5, variable=self.sensitivity_var, 
+                 orient=tk.HORIZONTAL, length=150).pack(side=tk.LEFT, padx=5)
+        ttk.Label(sensitivity_frame, text="(1=Low, 5=High)").pack(side=tk.LEFT)
         
         file_frame = ttk.LabelFrame(main_frame, text="File Operations", padding="10")
-        file_frame.grid(row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        file_frame.grid(row=4, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         self.save_btn = ttk.Button(file_frame, text="Save", 
                                    command=self.save_sequence, width=20)
@@ -160,30 +178,137 @@ class AdvancedRecorderGUI:
         self.speed_scale.config(command=update_speed_label)
         
         sequence_frame = ttk.LabelFrame(main_frame, text="Sequence Logs", padding="10")
-        sequence_frame.grid(row=4, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        sequence_frame.grid(row=5, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         
-        self.sequence_text = scrolledtext.ScrolledText(sequence_frame, width=70, height=15)
+        self.sequence_text = scrolledtext.ScrolledText(sequence_frame, width=70, height=12)
         self.sequence_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        self.status_var = tk.StringVar(value="Ready")
+        # Debug log
+        debug_frame = ttk.LabelFrame(main_frame, text="Context Detection Log", padding="10")
+        debug_frame.grid(row=6, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        
+        self.debug_text = scrolledtext.ScrolledText(debug_frame, width=70, height=5)
+        self.debug_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        
+        self.status_var = tk.StringVar(value="Ready - Dynamic Clipboard Mode ENABLED")
         self.status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
                                    relief=tk.SUNKEN, anchor=tk.W)
-        self.status_bar.grid(row=5, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        self.status_bar.grid(row=7, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         instructions = ttk.Label(main_frame, 
-                                text="Press F9 to stop recording/playing • F10 to pause/resume playback\n" +
-                                     "Developed by Nader for Chandan Chakraborty",
+                                text="Developed by Nader Mahbub Khan\n" +
+                                     "Press F9 to stop • Developed by Nader for Chandan Chakraborty",
                                 font=('Arial', 9), foreground='gray')
-        instructions.grid(row=6, column=0, columnspan=4, pady=5)
+        instructions.grid(row=8, column=0, columnspan=4, pady=5)
         
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(4, weight=1)
+        main_frame.rowconfigure(5, weight=1)
         sequence_frame.columnconfigure(0, weight=1)
         sequence_frame.rowconfigure(0, weight=1)
+        debug_frame.columnconfigure(0, weight=1)
         
         self.setup_global_hotkey()
+    
+    def toggle_smart_mode(self):
+        if self.smart_context_var.get():
+            self.status_var.set("Smart Context Detection ENABLED")
+            self.log_debug("🧠 Smart detection ON")
+        else:
+            self.status_var.set("Smart Context Detection DISABLED - Manual mode")
+            self.log_debug("Manual mode activated")
+    
+    def detect_context(self, action_type, key=None):
+        """Smart context detection based on recent actions"""
+        if not self.smart_context_var.get():
+            return "mixed"
+        
+        current_time = time.time()
+        sensitivity = self.sensitivity_var.get()
+        
+        # Add to recent actions
+        self.recent_actions.append({
+            'type': action_type,
+            'key': key,
+            'time': current_time
+        })
+        
+        # Count recent arrow keys (last 5 seconds)
+        recent_arrows = sum(1 for a in self.recent_actions 
+                           if a['time'] > current_time - 5 
+                           and a.get('key') in ['up', 'down', 'left', 'right'])
+        
+        # Count recent copy/paste
+        recent_copy_paste = sum(1 for a in self.recent_actions 
+                               if a['time'] > current_time - 3 
+                               and a['type'] in ['copy', 'paste'])
+        
+        # Count mouse clicks
+        recent_clicks = sum(1 for a in self.recent_actions 
+                           if a['time'] > current_time - 5 
+                           and a['type'] in ['click', 'right_click'])
+        
+        # Excel detection logic
+        excel_score = 0
+        
+        # Strong Excel indicators
+        if recent_arrows >= sensitivity:
+            excel_score += 3
+        if recent_copy_paste > 0 and recent_arrows > 0:
+            excel_score += 2
+        if action_type in ['copy', 'paste'] and (current_time - self.last_arrow_key_time) < 2:
+            excel_score += 2
+        
+        # Absolute mode indicators
+        absolute_score = 0
+        
+        if key == 'n' and self.ctrl_pressed:  # Ctrl+N (new file)
+            absolute_score += 5
+            self.log_debug("🆕 Ctrl+N detected → ABSOLUTE mode")
+        if key == 't' and self.ctrl_pressed:  # Ctrl+T (new tab)
+            absolute_score += 5
+            self.log_debug("🌐 Ctrl+T detected → BROWSER mode")
+        if recent_clicks > sensitivity:
+            absolute_score += 2
+        if action_type == 'click':
+            absolute_score += 1
+        
+        # Determine context
+        if excel_score > absolute_score and excel_score >= 3:
+            new_context = "excel"
+            color = "green"
+            symbol = "📊"
+        elif absolute_score > excel_score and absolute_score >= 3:
+            new_context = "absolute"
+            color = "orange"
+            symbol = "🎯"
+        else:
+            new_context = "mixed"
+            color = "blue"
+            symbol = "🔀"
+        
+        # Log context change
+        if new_context != self.current_context:
+            self.current_context = new_context
+            self.context_switch_times.append(current_time)
+            self.log_debug(f"{symbol} Context switched to: {new_context.upper()} (Excel:{excel_score}, Abs:{absolute_score})")
+            self.root.after(0, lambda: self.context_label.config(
+                text=new_context.upper(), 
+                foreground=color
+            ))
+        
+        return self.current_context
+    
+    def log_debug(self, message):
+        """Log to debug window"""
+        timestamp = time.strftime('%H:%M:%S')
+        self.debug_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.debug_text.see(tk.END)
+        # Keep only last 50 lines
+        lines = self.debug_text.get('1.0', tk.END).split('\n')
+        if len(lines) > 50:
+            self.debug_text.delete('1.0', '2.0')
     
     def log_error(self, context, error):
         error_msg = f"[{time.strftime('%H:%M:%S')}] {context}: {str(error)}"
@@ -247,160 +372,6 @@ class AdvancedRecorderGUI:
             except Exception as e:
                 self.log_error("Clipboard monitor", e)
             time.sleep(0.2)
-    
-    def analyze_selection_context(self, clipboard_content):
-        if not clipboard_content:
-            return None
-            
-        words = clipboard_content.split()
-        if len(words) < 3:
-            return {
-                'full_text': clipboard_content,
-                'start_context': clipboard_content,
-                'end_context': clipboard_content,
-                'pattern': clipboard_content,
-                'words_count': len(words)
-            }
-        
-        start_words = ' '.join(words[:min(5, len(words)//2)])
-        end_words = ' '.join(words[max(-5, -len(words)//2):])
-        
-        return {
-            'full_text': clipboard_content,
-            'start_context': start_words,
-            'end_context': end_words,
-            'start_pattern': re.escape(start_words),
-            'end_pattern': re.escape(end_words),
-            'words_count': len(words)
-        }
-            
-    def capture_text_around_cursor(self, x, y, radius=50):
-        if not self.use_ocr_var.get():
-            return None
-            
-        try:
-            x1, y1 = max(0, x - radius), max(0, y - radius)
-            x2, y2 = x + radius, y + radius
-            
-            screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
-            img_np = np.array(screenshot)
-            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            text = pytesseract.image_to_string(thresh, config='--psm 8 -c tessedit_char_whitelist=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,')
-            
-            return text.strip() if text.strip() else None
-        except Exception as e:
-            self.log_error("OCR around cursor", e)
-            return None
-
-    def capture_text_at_selection(self, x1, y1, x2, y2):
-        if not self.use_ocr_var.get():
-            return None
-            
-        try:
-            x1, x2 = min(x1, x2), max(x1, x2)
-            y1, y2 = min(y1, y2), max(y1, y2)
-            
-            screenshot = ImageGrab.grab(bbox=(x1, y1, x2, y2))
-            img_np = np.array(screenshot)
-            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            text = pytesseract.image_to_string(thresh, config='--psm 6')
-            
-            return text.strip() if text.strip() else None
-        except Exception as e:
-            self.log_error("OCR capture", e)
-            return None
-
-    def _fuzzy_match(self, a, b, threshold=0.8):
-        if not a or not b:
-            return False
-        if a == b:
-            return True
-        ratio = SequenceMatcher(None, a.lower(), b.lower()).ratio()
-        return ratio >= threshold
-
-    def locate_text_on_screen(self, search_text, min_confidence=50):
-        if not search_text or len(search_text.strip()) < 2:
-            return None
-            
-        try:
-            screenshot = ImageGrab.grab()
-            img_np = np.array(screenshot)
-            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-
-            data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
-            n_boxes = len(data['text'])
-            search_words = [w for w in search_text.split() if w]
-
-            if not search_words:
-                return None
-
-            # Try multi-word phrase first
-            for i in range(n_boxes - len(search_words) + 1):
-                matched = True
-                phrase_boxes = []
-                for j, word in enumerate(search_words):
-                    idx = i + j
-                    conf = int(data['conf'][idx])
-                    detected = data['text'][idx].strip()
-                    if conf < min_confidence or not detected:
-                        matched = False
-                        break
-                    if not self._fuzzy_match(word, detected, threshold=0.75):
-                        matched = False
-                        break
-                    phrase_boxes.append(idx)
-
-                if matched and phrase_boxes:
-                    lefts = [data['left'][idx] for idx in phrase_boxes]
-                    tops = [data['top'][idx] for idx in phrase_boxes]
-                    widths = [data['width'][idx] for idx in phrase_boxes]
-                    heights = [data['height'][idx] for idx in phrase_boxes]
-                    
-                    x1 = min(lefts)
-                    y1 = min(tops)
-                    x2 = max(lefts[i] + widths[i] for i in range(len(lefts)))
-                    y2 = max(tops[i] + heights[i] for i in range(len(tops)))
-                    
-                    x_center = (x1 + x2) // 2
-                    y_center = (y1 + y2) // 2
-                    return (x_center, y_center)
-
-            # Fallback: single word (first word)
-            first_word = search_words[0]
-            for i in range(n_boxes):
-                conf = int(data['conf'][i])
-                detected = data['text'][i].strip()
-                if conf >= min_confidence and detected and self._fuzzy_match(first_word, detected, threshold=0.8):
-                    x = data['left'][i] + data['width'][i] // 2
-                    y = data['top'][i] + data['height'][i] // 2
-                    return (x, y)
-
-            return None
-
-        except Exception as e:
-            self.log_error("Text location failed", e)
-            return None
-
-    def navigate_to_context_silently(self, context_info):
-        if not context_info or not self.use_ocr_var.get():
-            return False
-            
-        start_context = context_info.get('start_context', '').strip()
-        if not start_context:
-            return False
-            
-        location = self.locate_text_on_screen(start_context)
-        if location:
-            x, y = location
-            screen_w, screen_h = pyautogui.size()
-            x = max(10, min(screen_w - 10, x))
-            y = max(10, min(screen_h - 10, y))
-            pyautogui.moveTo(x, y, duration=0.3, tween=pyautogui.easeInOutQuad)
-            time.sleep(0.2)
-            return True
-        return False
             
     def toggle_recording(self):
         if not self.recording:
@@ -416,7 +387,8 @@ class AdvancedRecorderGUI:
         self.clear_btn.config(state='disabled')
         self.save_btn.config(state='disabled')
         self.load_btn.config(state='disabled')
-        self.status_var.set("Recording... (Press F9 to stop)")
+        
+        self.status_var.set(f"🔴 Recording... (Dynamic Mode ON) - Press F9 to stop")
         
         with self.action_lock:
             self.recorded_actions = []
@@ -427,7 +399,6 @@ class AdvancedRecorderGUI:
         self.selection_end = None
         self.is_dragging = False
         self.drag_start_time = None
-        self.scroll_before_selection = []
         self.context_actions = []
         self.current_combo = set()
         self.ctrl_pressed = False
@@ -438,9 +409,15 @@ class AdvancedRecorderGUI:
         self.clipboard_history.clear()
         self.pending_combo_action = None
         self.copy_action_id = 0
+        self.current_context = "mixed"
+        self.last_arrow_key_time = 0
+        self.arrow_key_count = 0
+        self.recent_actions.clear()
         
         self.last_clipboard = self.get_clipboard_safe()
         self.clipboard_before_copy = self.last_clipboard
+        
+        self.log_debug("🎬 Recording started - Dynamic clipboard mode active")
         
         clipboard_thread = threading.Thread(target=self.monitor_clipboard, daemon=True)
         clipboard_thread.start()
@@ -448,131 +425,88 @@ class AdvancedRecorderGUI:
         def on_click(x, y, button, pressed):
             if not self.recording or not self.record_mouse_var.get():
                 return
-                
+            
+            current_time = time.time()
+            
             if pressed:
                 self.mouse_pressed = True
-                self.selection_start = (x, y, time.time())
-                self.drag_start_time = time.time()
+                self.selection_start = (x, y, current_time)
+                self.drag_start_time = current_time
                 
-                if self.smart_selection_var.get():
-                    current_time = time.time()
-                    with self.action_lock:
-                        self.context_actions = [
-                            action for action in self.recorded_actions[-20:]
-                            if current_time - action.get('time', 0) < 5
-                        ]
+                # Detect context
+                context = self.detect_context('click')
                 
-                if button == mouse.Button.right:
+                # Always record right/middle clicks with absolute coords
+                if button in [mouse.Button.right, mouse.Button.middle]:
                     action = {
-                        'type': 'right_click',
+                        'type': 'right_click' if button == mouse.Button.right else 'middle_click',
                         'x': x,
                         'y': y,
-                        'time': time.time()
+                        'time': current_time,
+                        'context': 'absolute'  # Always absolute for special clicks
                     }
-                    if self.use_ocr_var.get():
-                        text = self.capture_text_around_cursor(x, y)
-                        if text:
-                            action['element_text'] = text
-                    self.add_action(action)
-                elif button == mouse.Button.middle:
-                    action = {
-                        'type': 'middle_click',
-                        'x': x,
-                        'y': y,
-                        'time': time.time()
-                    }
-                    if self.use_ocr_var.get():
-                        text = self.capture_text_around_cursor(x, y)
-                        if text:
-                            action['element_text'] = text
                     self.add_action(action)
                     
             else:
                 if self.mouse_pressed and self.selection_start:
-                    self.selection_end = (x, y, time.time())
+                    self.selection_end = (x, y, current_time)
                     
                     start_x, start_y, start_time = self.selection_start
                     distance = ((x - start_x)**2 + (y - start_y)**2)**0.5
-                    duration = time.time() - self.drag_start_time
+                    duration = current_time - self.drag_start_time
+                    
+                    context = self.detect_context('click')
                     
                     if distance > 10 and duration > 0.1:
-                        recent_copy = None
-                        with self.action_lock:
-                            for i in range(len(self.recorded_actions) - 1, max(0, len(self.recorded_actions) - 10), -1):
-                                if self.recorded_actions[i].get('type') == 'copy':
-                                    recent_copy = i
-                                    break
-                        
-                        action = {
-                            'type': 'text_selection',
-                            'start_x': start_x,
-                            'start_y': start_y,
-                            'end_x': x,
-                            'end_y': y,
-                            'duration': duration,
-                            'time': time.time()
-                        }
-                        
-                        if recent_copy is not None:
-                            action['linked_copy_index'] = recent_copy
-                        
-                        if self.smart_selection_var.get() and self.context_actions:
-                            scroll_actions = [a for a in self.context_actions if a.get('type') == 'scroll']
-                            if scroll_actions:
-                                action['context_scrolls'] = scroll_actions
-                        
-                        if self.use_ocr_var.get():
-                            selected_text = self.capture_text_at_selection(start_x, start_y, x, y)
-                            if selected_text:
-                                action['selected_text'] = selected_text
-                        
-                        self.add_action(action)
+                        # Only record selection if in absolute mode
+                        if context != "excel":
+                            action = {
+                                'type': 'selection',
+                                'start_x': start_x,
+                                'start_y': start_y,
+                                'end_x': x,
+                                'end_y': y,
+                                'duration': duration,
+                                'time': current_time,
+                                'context': context
+                            }
+                            self.add_action(action)
                     else:
-                        action = {
-                            'type': 'click',
-                            'x': start_x,
-                            'y': start_y,
-                            'button': str(button),
-                            'time': time.time()
-                        }
-                        if self.use_ocr_var.get():
-                            text = self.capture_text_around_cursor(start_x, start_y)
-                            if text:
-                                action['element_text'] = text
-                        self.add_action(action)
+                        # Single click - only record if not in Excel mode
+                        if context != "excel":
+                            action = {
+                                'type': 'click',
+                                'x': start_x,
+                                'y': start_y,
+                                'button': str(button),
+                                'time': current_time,
+                                'context': context
+                            }
+                            self.add_action(action)
                 
                 self.mouse_pressed = False
                 self.selection_start = None
                 self.is_dragging = False
                 
-        def on_move(x, y):
-            if not self.recording or not self.record_mouse_var.get():
-                return
-            
-            if self.mouse_pressed and self.selection_start:
-                start_x, start_y, _ = self.selection_start
-                distance = ((x - start_x)**2 + (y - start_y)**2)**0.5
-                if distance > 5:
-                    self.is_dragging = True
-                
         def on_scroll(x, y, dx, dy):
             if not self.recording or not self.record_scroll_var.get():
                 return
-                
-            current_time = time.time()
-            if current_time - self.last_scroll_time < 0.05:
-                return
-            self.last_scroll_time = current_time
             
-            action = {
-                'type': 'scroll',
-                'x': x,
-                'y': y,
-                'dx': dx,
-                'dy': dy,
-                'time': current_time
-            }
-            self.add_action(action)
+            current_time = time.time()
+            context = self.detect_context('scroll')
+            
+            # Only record scroll if not in Excel mode
+            if context != "excel":
+                action = {
+                    'type': 'scroll',
+                    'x': x,
+                    'y': y,
+                    'dx': dx,
+                    'dy': dy,
+                    'time': current_time,
+                    'context': context
+                }
+                self.add_action(action)
             
         def on_key_press(key):
             if not self.recording or not self.record_keyboard_var.get():
@@ -581,6 +515,7 @@ class AdvancedRecorderGUI:
                 return
 
             vk = getattr(key, 'vk', None)
+            current_time = time.time()
 
             if key in [keyboard.Key.ctrl_l, keyboard.Key.ctrl_r, keyboard.Key.ctrl]:
                 self.ctrl_pressed = True
@@ -592,54 +527,69 @@ class AdvancedRecorderGUI:
                 self.alt_pressed = True
                 return
 
+            # Track arrow keys for Excel detection
+            key_name = None
+            if hasattr(key, 'name'):
+                key_name = key.name.lower()
+            
+            if key_name in ['up', 'down', 'left', 'right']:
+                self.last_arrow_key_time = current_time
+                self.arrow_key_count += 1
+
             if self.ctrl_pressed and vk is not None:
-                current_time = time.time()
-                if vk == 67:  # 'C'
+                if vk == 67:  # 'C' - Copy
                     self.clipboard_before_copy = self.get_clipboard_safe()
                     self.copy_action_id += 1
                     current_id = self.copy_action_id
-                    action = {'type': 'copy', 'time': current_time, '_id': current_id}
+                    self.last_copy_paste_time = current_time
+                    
+                    context = self.detect_context('copy')
+                    
+                    action = {
+                        'type': 'copy',
+                        'time': current_time,
+                        '_id': current_id,
+                        'context': context
+                    }
                     self.add_action(action)
 
+                    # Just capture a preview for display, NOT for playback
                     def delayed_capture(copy_id):
-                        time.sleep(1.0)  # Increased delay for reliability
+                        time.sleep(1.2)
                         new_clip = self.get_clipboard_safe()
                         if new_clip != self.clipboard_before_copy:
-                            context = self.analyze_selection_context(new_clip)
                             with self.action_lock:
-                                # Find the copy action by ID
                                 for act in reversed(self.recorded_actions):
                                     if act.get('_id') == copy_id:
-                                        act.update({
-                                            'copied_content': new_clip,
-                                            'selection_context': context
-                                        })
+                                        # Only store preview for display
+                                        preview = new_clip[:50] + "..." if len(new_clip) > 50 else new_clip
+                                        act['preview'] = preview
                                         break
-                                # Also update linked text_selection
-                                for act in reversed(self.recorded_actions):
-                                    if (act.get('type') == 'text_selection' and 
-                                        'linked_copy_index' in act):
-                                        # We don't have index, so skip for now
-                                        # In practice, you could store _id in text_selection too
-                                        pass
                             self.root.after(0, self.update_sequence_display)
 
                     threading.Thread(target=delayed_capture, args=(current_id,), daemon=True).start()
                     return
 
-                elif vk == 86:  # 'V'
-                    clipboard_content = self.get_clipboard_safe()
+                elif vk == 86:  # 'V' - Paste
+                    self.last_copy_paste_time = current_time
+                    context = self.detect_context('paste')
+                    
+                    # ALWAYS use current clipboard for ALL contexts
                     action = {
                         'type': 'paste',
                         'time': current_time,
-                        'clipboard_content': clipboard_content
+                        'context': context,
+                        'dynamic': True  # Flag to indicate dynamic clipboard use
                     }
+                    
                     self.add_action(action)
+                    self.log_debug(f"📋 Paste recorded - will use CURRENT clipboard on playback")
                     return
 
-                elif vk == 88:  # 'X'
+                elif vk == 88:  # 'X' - Cut
                     self.clipboard_before_copy = self.get_clipboard_safe()
-                    action = {'type': 'cut', 'time': current_time}
+                    context = self.detect_context('cut')
+                    action = {'type': 'cut', 'time': current_time, 'context': context}
                     self.add_action(action)
 
                     def capture_cut():
@@ -648,10 +598,25 @@ class AdvancedRecorderGUI:
                         if new_clip != self.clipboard_before_copy:
                             with self.action_lock:
                                 if self.recorded_actions and self.recorded_actions[-1]['type'] == 'cut':
-                                    self.recorded_actions[-1]['cut_content'] = new_clip
+                                    preview = new_clip[:50] + "..." if len(new_clip) > 50 else new_clip
+                                    self.recorded_actions[-1]['preview'] = preview
                             self.root.after(0, self.update_sequence_display)
 
                     threading.Thread(target=capture_cut, daemon=True).start()
+                    return
+                
+                elif vk == 78:  # 'N' - Ctrl+N (New file/window)
+                    context = self.detect_context('key', 'n')
+                    action = {'type': 'new_file', 'time': current_time, 'context': context}
+                    self.add_action(action)
+                    self.log_debug("📄 Ctrl+N (New File) detected")
+                    return
+                
+                elif vk == 84:  # 'T' - Ctrl+T (New tab)
+                    context = self.detect_context('key', 't')
+                    action = {'type': 'new_tab', 'time': current_time, 'context': context}
+                    self.add_action(action)
+                    self.log_debug("🌐 Ctrl+T (New Tab) detected")
                     return
 
                 elif vk == 65:  # 'A'
@@ -675,6 +640,7 @@ class AdvancedRecorderGUI:
                     self.add_action(action)
                     return
 
+            # Regular key handling
             key_repr = None
 
             if hasattr(key, 'name'):
@@ -722,13 +688,16 @@ class AdvancedRecorderGUI:
                     key_repr = chr(vk)
 
             if key_repr is not None:
+                context = self.detect_context('key', key_repr)
+                
                 action = {
                     'type': 'key',
                     'key': key_repr,
                     'ctrl': self.ctrl_pressed,
                     'shift': self.shift_pressed,
                     'alt': self.alt_pressed,
-                    'time': time.time()
+                    'time': current_time,
+                    'context': context
                 }
                 self.add_action(action)
 
@@ -745,8 +714,7 @@ class AdvancedRecorderGUI:
                 
         self.mouse_listener = mouse.Listener(
             on_click=on_click,
-            on_scroll=on_scroll,
-            on_move=on_move
+            on_scroll=on_scroll
         )
         self.keyboard_listener = keyboard.Listener(
             on_press=on_key_press,
@@ -767,13 +735,15 @@ class AdvancedRecorderGUI:
         
         if self.mouse_listener:
             self.mouse_listener.stop()
-            self.mouse_listener.join()  # Critical fix
+            self.mouse_listener.join()
         if self.keyboard_listener:
             self.keyboard_listener.stop()
-            self.keyboard_listener.join()  # Critical fix
+            self.keyboard_listener.join()
         
         with self.action_lock:
             action_count = len(self.recorded_actions)
+        
+        self.log_debug(f"⏹ Recording stopped - {action_count} actions captured")
         self.status_var.set(f"Recording stopped. {action_count} actions recorded.")
     
     def play_sequence(self, loop_count=1):
@@ -785,7 +755,7 @@ class AdvancedRecorderGUI:
             
         def play_thread():
             original_failsafe = pyautogui.FAILSAFE
-            pyautogui.FAILSAFE = False  # Prevent corner crash during playback
+            pyautogui.FAILSAFE = False
             try:
                 self.playing = True
                 self.play_btn.config(state='disabled')
@@ -795,15 +765,15 @@ class AdvancedRecorderGUI:
                 self.save_btn.config(state='disabled')
                 self.load_btn.config(state='disabled')
                 
-                self.safe_update_status(f"Playing sequence... (Press F9 to stop)")
+                self.safe_update_status(f"▶ Playing sequence... (Press F9 to stop)")
                 time.sleep(2)
                 
                 for loop in range(loop_count):
                     if not self.playing:
                         break
                     if loop_count > 1:
-                        self.safe_update_status(f"Loop {loop+1}/{loop_count}...")
-                        time.sleep(1)
+                        self.safe_update_status(f"🔄 Loop {loop+1}/{loop_count}...")
+                        time.sleep(0.5)
                     
                     speed = self.speed_var.get()
                     prev_time = None
@@ -830,71 +800,33 @@ class AdvancedRecorderGUI:
                         
                         try:
                             action_type = action['type']
+                            context = action.get('context', 'mixed')
                             
                             def safe_coords(x, y):
                                 x = max(0, min(screen_width - 1, x))
                                 y = max(0, min(screen_height - 1, y))
                                 return int(x), int(y)
                             
-                            if action_type == 'click':
+                            # Only execute mouse actions if not in Excel context
+                            if action_type == 'click' and context != 'excel':
                                 x, y = safe_coords(action['x'], action['y'])
                                 pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
                                 pyautogui.click()
-                                text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
-                                self.safe_update_status(f"Playing: Click{text_info} at ({x}, {y})")
+                                self.safe_update_status(f"Playing: Click at ({x}, {y})")
                                 
                             elif action_type == 'right_click':
                                 x, y = safe_coords(action['x'], action['y'])
                                 pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
                                 pyautogui.rightClick()
-                                text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
-                                self.safe_update_status(f"Playing: Right-click{text_info} at ({x}, {y})")
+                                self.safe_update_status(f"Playing: Right-click at ({x}, {y})")
                                 
                             elif action_type == 'middle_click':
                                 x, y = safe_coords(action['x'], action['y'])
                                 pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
                                 pyautogui.middleClick()
-                                text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
-                                self.safe_update_status(f"Playing: Middle-click{text_info} at ({x}, {y})")
+                                self.safe_update_status(f"Playing: Middle-click at ({x}, {y})")
                                 
-                            elif action_type == 'text_selection':
-                                start_x, start_y = safe_coords(action['start_x'], action['start_y'])
-                                end_x, end_y = safe_coords(action['end_x'], action['end_y'])
-                                
-                                if self.smart_selection_var.get() and 'selection_context' in action:
-                                    context = action['selection_context']
-                                    self.safe_update_status("Locating context silently...")
-                                    if context and 'start_context' in context:
-                                        found = self.navigate_to_context_silently(context)
-                                        if not found:
-                                            self.safe_update_status("⚠ Context not found! Using coords.")
-                                    time.sleep(0.3)
-                                    
-                                    if context and context.get('words_count', 0) > 20:
-                                        pyautogui.click(start_x, start_y)
-                                        time.sleep(0.1)
-                                        pyautogui.click(clicks=3, interval=0.1)
-                                        time.sleep(0.3)
-                                    else:
-                                        pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
-                                        pyautogui.mouseDown()
-                                        time.sleep(0.05)
-                                        pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
-                                        time.sleep(0.05)
-                                        pyautogui.mouseUp()
-                                        time.sleep(0.1)
-                                else:
-                                    pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
-                                    pyautogui.mouseDown()
-                                    time.sleep(0.05)
-                                    pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
-                                    time.sleep(0.05)
-                                    pyautogui.mouseUp()
-                                
-                                self.safe_update_status("Playing: Text selection")
-                                time.sleep(0.2)
-                                
-                            elif action_type == 'selection':
+                            elif action_type == 'selection' and context != 'excel':
                                 start_x, start_y = safe_coords(action['start_x'], action['start_y'])
                                 end_x, end_y = safe_coords(action['end_x'], action['end_y'])
                                 pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
@@ -905,7 +837,7 @@ class AdvancedRecorderGUI:
                                 pyautogui.mouseUp()
                                 self.safe_update_status("Playing: Selection/Drag")
                                 
-                            elif action_type == 'scroll':
+                            elif action_type == 'scroll' and context != 'excel':
                                 x, y = safe_coords(action['x'], action['y'])
                                 pyautogui.moveTo(x, y, duration=0.1)
                                 scroll_amount = int(action['dy'] * 120)
@@ -915,23 +847,31 @@ class AdvancedRecorderGUI:
                                 
                             elif action_type == 'copy':
                                 pyautogui.hotkey('ctrl', 'c')
-                                self.safe_update_status("Playing: Copy (Ctrl+C)")
-                                time.sleep(0.5)  # Increased delay
+                                ctx_tag = f" [{context.upper()}]"
+                                self.safe_update_status(f"Playing: Copy{ctx_tag}")
+                                time.sleep(0.6)
                                 
                             elif action_type == 'paste':
-                                if 'clipboard_content' in action and action['clipboard_content']:
-                                    try:
-                                        pyperclip.copy(action['clipboard_content'])
-                                        time.sleep(0.2)
-                                    except Exception as e:
-                                        self.log_error("Set clipboard for paste", e)
+                                # ALWAYS use current clipboard content
+                                current_clip = self.get_clipboard_safe()
+                                preview = current_clip[:30] + "..." if len(current_clip) > 30 else current_clip
+                                self.safe_update_status(f"Playing: Paste [DYNAMIC: {preview}]")
                                 pyautogui.hotkey('ctrl', 'v')
-                                self.safe_update_status("Playing: Paste (Ctrl+V)")
                                 time.sleep(0.3)
                                 
                             elif action_type == 'cut':
                                 pyautogui.hotkey('ctrl', 'x')
                                 self.safe_update_status("Playing: Cut (Ctrl+X)")
+                                time.sleep(0.5)
+                            
+                            elif action_type == 'new_file':
+                                pyautogui.hotkey('ctrl', 'n')
+                                self.safe_update_status("Playing: New File (Ctrl+N)")
+                                time.sleep(0.5)
+                            
+                            elif action_type == 'new_tab':
+                                pyautogui.hotkey('ctrl', 't')
+                                self.safe_update_status("Playing: New Tab (Ctrl+T)")
                                 time.sleep(0.5)
                                 
                             elif action_type == 'select_all':
@@ -959,11 +899,6 @@ class AdvancedRecorderGUI:
                                 self.safe_update_status("Playing: Find (Ctrl+F)")
                                 time.sleep(0.1)
                                 
-                            elif action_type == 'clipboard_change':
-                                pyperclip.copy(action['content'])
-                                self.safe_update_status("Playing: Clipboard updated")
-                                time.sleep(0.1)
-                                
                             elif action_type == 'key':
                                 key = action['key']
                                 modifiers = []
@@ -981,7 +916,12 @@ class AdvancedRecorderGUI:
                                 else:
                                     pyautogui.write(key)
                                 
-                                self.safe_update_status(f"Playing: Key press '{key}'")
+                                ctx_tag = f" [{context.upper()}]" if key in ['up','down','left','right'] else ""
+                                self.safe_update_status(f"Playing: Key '{key}'{ctx_tag}")
+                                
+                                # Extra delay for arrow keys in Excel context
+                                if key in ['up', 'down', 'left', 'right'] and context == 'excel':
+                                    time.sleep(0.25)
                                 
                         except Exception as e:
                             self.log_error(f"Playing action {i}", e)
@@ -993,7 +933,7 @@ class AdvancedRecorderGUI:
                 self.clear_btn.config(state='normal')
                 self.save_btn.config(state='normal')
                 self.load_btn.config(state='normal')
-                self.safe_update_status("Playback completed")
+                self.safe_update_status("✅ Playback completed")
                 
             finally:
                 pyautogui.FAILSAFE = original_failsafe
@@ -1013,6 +953,9 @@ class AdvancedRecorderGUI:
         with self.action_lock:
             self.recorded_actions = []
         self.sequence_text.delete('1.0', tk.END)
+        self.debug_text.delete('1.0', tk.END)
+        self.current_context = "mixed"
+        self.context_label.config(text="MIXED", foreground="blue")
         self.status_var.set("Sequence cleared")
         
     def save_sequence(self):
@@ -1060,70 +1003,53 @@ class AdvancedRecorderGUI:
         
         for i, action in enumerate(actions_copy, 1):
             action_type = action.get('type', 'unknown')
+            context = action.get('context', 'mixed')
+            
+            # Context icon
+            if context == 'excel':
+                ctx_icon = "📊"
+            elif context == 'absolute':
+                ctx_icon = "🎯"
+            else:
+                ctx_icon = "🔀"
             
             if action_type == 'click':
-                text = f"{i}. Click at ({action['x']}, {action['y']})"
-                if 'element_text' in action:
-                    text += f" → '{action['element_text']}'"
-                text += "\n"
+                text = f"{i}. {ctx_icon} Click at ({action['x']}, {action['y']})\n"
             elif action_type == 'right_click':
-                text = f"{i}. Right-click at ({action['x']}, {action['y']})"
-                if 'element_text' in action:
-                    text += f" → '{action['element_text']}'"
-                text += "\n"
+                text = f"{i}. {ctx_icon} Right-click at ({action['x']}, {action['y']})\n"
             elif action_type == 'middle_click':
-                text = f"{i}. Middle-click at ({action['x']}, {action['y']})"
-                if 'element_text' in action:
-                    text += f" → '{action['element_text']}'"
-                text += "\n"
-            elif action_type == 'text_selection':
-                text = f"{i}. Text Selection from ({action['start_x']}, {action['start_y']}) to ({action['end_x']}, {action['end_y']})"
-                if 'copied_content' in action:
-                    preview = action['copied_content'][:30] + '...' if len(action['copied_content']) > 30 else action['copied_content']
-                    text += f"\n    → Content: '{preview}'"
-                if 'selection_context' in action:
-                    context = action['selection_context']
-                    text += f"\n    → Context: Start='{context.get('start_context', '')[:20]}...'"
-                if 'selected_text' in action:
-                    preview = action['selected_text'][:30] + '...' if len(action['selected_text']) > 30 else action['selected_text']
-                    text += f"\n    → OCR: '{preview}'"
-                text += "\n"
+                text = f"{i}. {ctx_icon} Middle-click at ({action['x']}, {action['y']})\n"
             elif action_type == 'selection':
-                text = f"{i}. Selection/Drag from ({action['start_x']}, {action['start_y']}) to ({action['end_x']}, {action['end_y']})\n"
+                text = f"{i}. {ctx_icon} Selection from ({action['start_x']}, {action['start_y']}) to ({action['end_x']}, {action['end_y']})\n"
             elif action_type == 'scroll':
                 direction = "down" if action['dy'] < 0 else "up"
-                text = f"{i}. Scroll {direction} at ({action['x']}, {action['y']})\n"
+                text = f"{i}. {ctx_icon} Scroll {direction}\n"
             elif action_type == 'copy':
-                text = f"{i}. Copy (Ctrl+C)"
-                if 'copied_content' in action:
-                    preview = action['copied_content'][:40] + '...' if len(action['copied_content']) > 40 else action['copied_content']
-                    text += f" - Copied: '{preview}'"
+                text = f"{i}. {ctx_icon} Copy (Ctrl+C)"
+                if 'preview' in action:
+                    text += f" → '{action['preview']}'"
                 text += "\n"
             elif action_type == 'paste':
-                text = f"{i}. Paste (Ctrl+V)"
-                if 'clipboard_content' in action:
-                    preview = action['clipboard_content'][:40] + '...' if len(action['clipboard_content']) > 40 else action['clipboard_content']
-                    text += f" - Content: '{preview}'"
-                text += "\n"
+                text = f"{i}. {ctx_icon} Paste (Ctrl+V) [DYNAMIC - uses current clipboard]\n"
             elif action_type == 'cut':
-                text = f"{i}. Cut (Ctrl+X)"
-                if 'cut_content' in action:
-                    preview = action['cut_content'][:40] + '...' if len(action['cut_content']) > 40 else action['cut_content']
-                    text += f" - Cut: '{preview}'"
+                text = f"{i}. {ctx_icon} Cut (Ctrl+X)"
+                if 'preview' in action:
+                    text += f" → '{action['preview']}'"
                 text += "\n"
+            elif action_type == 'new_file':
+                text = f"{i}. {ctx_icon} New File (Ctrl+N)\n"
+            elif action_type == 'new_tab':
+                text = f"{i}. {ctx_icon} New Tab (Ctrl+T)\n"
             elif action_type == 'select_all':
-                text = f"{i}. Select All (Ctrl+A)\n"
+                text = f"{i}. {ctx_icon} Select All (Ctrl+A)\n"
             elif action_type == 'undo':
-                text = f"{i}. Undo (Ctrl+Z)\n"
+                text = f"{i}. {ctx_icon} Undo (Ctrl+Z)\n"
             elif action_type == 'redo':
-                text = f"{i}. Redo (Ctrl+Y)\n"
+                text = f"{i}. {ctx_icon} Redo (Ctrl+Y)\n"
             elif action_type == 'save':
-                text = f"{i}. Save (Ctrl+S)\n"
+                text = f"{i}. {ctx_icon} Save (Ctrl+S)\n"
             elif action_type == 'find':
-                text = f"{i}. Find (Ctrl+F)\n"
-            elif action_type == 'clipboard_change':
-                content_preview = action['content'][:50] + '...' if len(action['content']) > 50 else action['content']
-                text = f"{i}. Clipboard changed: '{content_preview}'\n"
+                text = f"{i}. {ctx_icon} Find (Ctrl+F)\n"
             elif action_type == 'key':
                 modifiers = []
                 if action.get('ctrl'):
@@ -1134,11 +1060,11 @@ class AdvancedRecorderGUI:
                     modifiers.append('Alt')
                     
                 if modifiers:
-                    text = f"{i}. Key press: {'+'.join(modifiers)}+{action['key']}\n"
+                    text = f"{i}. {ctx_icon} Key: {'+'.join(modifiers)}+{action['key']}\n"
                 else:
-                    text = f"{i}. Key press: {action['key']}\n"
+                    text = f"{i}. {ctx_icon} Key: {action['key']}\n"
             else:
-                text = f"{i}. {action_type}\n"
+                text = f"{i}. {ctx_icon} {action_type}\n"
                 
             self.sequence_text.insert(tk.END, text)
             
@@ -1147,7 +1073,6 @@ class AdvancedRecorderGUI:
 def main():
     root = tk.Tk()
     
-    # Dependency checks
     missing = []
     try:
         import pytesseract
@@ -1171,21 +1096,8 @@ def main():
         missing.append("pillow")
     
     if missing:
-        messagebox.showerror("Missing Dependencies", 
-                           f"Please install required packages:\n"
-                           f"pip install {' '.join(missing)}\n\n"
-                           f"For OCR support, also install Tesseract-OCR from:\n"
-                           f"https://github.com/UB-Mannheim/tesseract/wiki")
-        return
-    
-    # Tesseract engine check
-    try:
-        pytesseract.get_tesseract_version()
-    except pytesseract.TesseractNotFoundError:
-        messagebox.showerror("Tesseract Missing", 
-            "Tesseract OCR engine not found!\n"
-            "Please install it from:\nhttps://github.com/UB-Mannheim/tesseract/wiki")
-        return
+        messagebox.showwarning("Missing Dependencies", 
+                           f"Install: pip install {' '.join(missing)}")
     
     app = AdvancedRecorderGUI(root)
     root.mainloop() 
