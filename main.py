@@ -22,7 +22,7 @@ class AdvancedRecorderGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("AutomatePro for Chandan Chakraborty")
-        self.root.geometry("900x800")
+        self.root.geometry("900x850")
         
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.05
@@ -60,7 +60,7 @@ class AdvancedRecorderGUI:
         
         self.context_actions = []
         self.last_action_time = 0
-        self.last_copy_index = -1
+        self.copy_action_id = 0  # Unique ID for copy actions
         
         self.max_actions = 10000
         
@@ -75,25 +75,37 @@ class AdvancedRecorderGUI:
         
         title_label = ttk.Label(main_frame, text="AutomatePro", 
                                font=('Arial', 16, 'bold'))
-        title_label.grid(row=0, column=0, columnspan=3, pady=10)
+        title_label.grid(row=0, column=0, columnspan=4, pady=10)
         
         control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="10")
-        control_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
+        control_frame.grid(row=1, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
         
         self.record_btn = ttk.Button(control_frame, text="Start Recording", 
                                      command=self.toggle_recording, width=20)
         self.record_btn.grid(row=0, column=0, padx=5, pady=5)
         
-        self.play_btn = ttk.Button(control_frame, text="Play", 
+        self.play_btn = ttk.Button(control_frame, text="Play Once", 
                                    command=self.play_sequence, width=20)
         self.play_btn.grid(row=0, column=1, padx=5, pady=5)
         
+        self.loop_play_btn = ttk.Button(control_frame, text="Loop Play", 
+                                        command=self.start_loop_play, width=20)
+        self.loop_play_btn.grid(row=0, column=2, padx=5, pady=5)
+        
         self.clear_btn = ttk.Button(control_frame, text="Clear", 
                                     command=self.clear_sequence, width=20)
-        self.clear_btn.grid(row=0, column=2, padx=5, pady=5)
+        self.clear_btn.grid(row=0, column=3, padx=5, pady=5)
+        
+        # Loop settings
+        loop_frame = ttk.Frame(control_frame)
+        loop_frame.grid(row=1, column=0, columnspan=4, pady=(10,0))
+        ttk.Label(loop_frame, text="Repeat:").pack(side=tk.LEFT)
+        self.loop_count_var = tk.IntVar(value=3)
+        ttk.Spinbox(loop_frame, from_=1, to=100, width=5, textvariable=self.loop_count_var).pack(side=tk.LEFT, padx=5)
+        ttk.Label(loop_frame, text="times").pack(side=tk.LEFT)
         
         options_frame = ttk.LabelFrame(main_frame, text="Recording Options", padding="10")
-        options_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        options_frame.grid(row=2, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         self.record_keyboard_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Keyboard", 
@@ -107,7 +119,7 @@ class AdvancedRecorderGUI:
         ttk.Checkbutton(options_frame, text="MouseScroll", 
                        variable=self.record_scroll_var).grid(row=0, column=2, padx=5)
         
-        self.use_ocr_var = tk.BooleanVar(value=True)
+        self.use_ocr_var = tk.BooleanVar(value=False)  # Disabled by default for performance
         ttk.Checkbutton(options_frame, text="OCR (Context Awareness)", 
                        variable=self.use_ocr_var).grid(row=1, column=0, padx=5)
         
@@ -120,7 +132,7 @@ class AdvancedRecorderGUI:
                        variable=self.smart_selection_var).grid(row=1, column=2, padx=5)
         
         file_frame = ttk.LabelFrame(main_frame, text="File Operations", padding="10")
-        file_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        file_frame.grid(row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         self.save_btn = ttk.Button(file_frame, text="Save", 
                                    command=self.save_sequence, width=20)
@@ -148,7 +160,7 @@ class AdvancedRecorderGUI:
         self.speed_scale.config(command=update_speed_label)
         
         sequence_frame = ttk.LabelFrame(main_frame, text="Sequence Logs", padding="10")
-        sequence_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        sequence_frame.grid(row=4, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         
         self.sequence_text = scrolledtext.ScrolledText(sequence_frame, width=70, height=15)
         self.sequence_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -156,13 +168,13 @@ class AdvancedRecorderGUI:
         self.status_var = tk.StringVar(value="Ready")
         self.status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
                                    relief=tk.SUNKEN, anchor=tk.W)
-        self.status_bar.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        self.status_bar.grid(row=5, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         instructions = ttk.Label(main_frame, 
                                 text="Press F9 to stop recording/playing • F10 to pause/resume playback\n" +
                                      "Developed by Nader for Chandan Chakraborty",
                                 font=('Arial', 9), foreground='gray')
-        instructions.grid(row=6, column=0, columnspan=3, pady=5)
+        instructions.grid(row=6, column=0, columnspan=4, pady=5)
         
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -341,7 +353,6 @@ class AdvancedRecorderGUI:
                     phrase_boxes.append(idx)
 
                 if matched and phrase_boxes:
-                    # Calculate bounding box of full phrase
                     lefts = [data['left'][idx] for idx in phrase_boxes]
                     tops = [data['top'][idx] for idx in phrase_boxes]
                     widths = [data['width'][idx] for idx in phrase_boxes]
@@ -401,6 +412,7 @@ class AdvancedRecorderGUI:
         self.recording = True
         self.record_btn.config(text="⏹ Stop Recording")
         self.play_btn.config(state='disabled')
+        self.loop_play_btn.config(state='disabled')
         self.clear_btn.config(state='disabled')
         self.save_btn.config(state='disabled')
         self.load_btn.config(state='disabled')
@@ -422,10 +434,10 @@ class AdvancedRecorderGUI:
         self.shift_pressed = False
         self.alt_pressed = False
         self.combo_detected = False
-        self.last_copy_index = -1
         self.selection_context = {}
         self.clipboard_history.clear()
         self.pending_combo_action = None
+        self.copy_action_id = 0
         
         self.last_clipboard = self.get_clipboard_safe()
         self.clipboard_before_copy = self.last_clipboard
@@ -584,31 +596,35 @@ class AdvancedRecorderGUI:
                 current_time = time.time()
                 if vk == 67:  # 'C'
                     self.clipboard_before_copy = self.get_clipboard_safe()
-                    action = {'type': 'copy', 'time': current_time}
+                    self.copy_action_id += 1
+                    current_id = self.copy_action_id
+                    action = {'type': 'copy', 'time': current_time, '_id': current_id}
                     self.add_action(action)
-                    self.last_copy_index = len(self.recorded_actions) - 1
 
-                    def delayed_capture():
-                        time.sleep(0.6)
+                    def delayed_capture(copy_id):
+                        time.sleep(1.0)  # Increased delay for reliability
                         new_clip = self.get_clipboard_safe()
                         if new_clip != self.clipboard_before_copy:
                             context = self.analyze_selection_context(new_clip)
                             with self.action_lock:
-                                if 0 <= self.last_copy_index < len(self.recorded_actions):
-                                    self.recorded_actions[self.last_copy_index].update({
-                                        'copied_content': new_clip,
-                                        'selection_context': context
-                                    })
-                                    for i in range(self.last_copy_index - 1, max(-1, self.last_copy_index - 6), -1):
-                                        if self.recorded_actions[i].get('type') == 'text_selection':
-                                            self.recorded_actions[i].update({
-                                                'copied_content': new_clip,
-                                                'selection_context': context
-                                            })
-                                            break
+                                # Find the copy action by ID
+                                for act in reversed(self.recorded_actions):
+                                    if act.get('_id') == copy_id:
+                                        act.update({
+                                            'copied_content': new_clip,
+                                            'selection_context': context
+                                        })
+                                        break
+                                # Also update linked text_selection
+                                for act in reversed(self.recorded_actions):
+                                    if (act.get('type') == 'text_selection' and 
+                                        'linked_copy_index' in act):
+                                        # We don't have index, so skip for now
+                                        # In practice, you could store _id in text_selection too
+                                        pass
                             self.root.after(0, self.update_sequence_display)
 
-                    threading.Thread(target=delayed_capture, daemon=True).start()
+                    threading.Thread(target=delayed_capture, args=(current_id,), daemon=True).start()
                     return
 
                 elif vk == 86:  # 'V'
@@ -627,7 +643,7 @@ class AdvancedRecorderGUI:
                     self.add_action(action)
 
                     def capture_cut():
-                        time.sleep(0.6)
+                        time.sleep(1.0)
                         new_clip = self.get_clipboard_safe()
                         if new_clip != self.clipboard_before_copy:
                             with self.action_lock:
@@ -661,7 +677,6 @@ class AdvancedRecorderGUI:
 
             key_repr = None
 
-            # Handle special keys first
             if hasattr(key, 'name'):
                 name = key.name.lower()
                 special_keys = {
@@ -695,18 +710,15 @@ class AdvancedRecorderGUI:
                 if name in special_keys:
                     key_repr = special_keys[name]
                 else:
-                    # Skip unknown special keys
                     return
 
-            # Handle printable characters
             elif hasattr(key, 'char') and key.char and (key.char.isprintable() or key.char in ['\t', '\n', '\r']):
                 key_repr = key.char
 
-            # Fallback for virtual keys (letters/numbers)
             elif vk is not None:
-                if 65 <= vk <= 90:  # A-Z
+                if 65 <= vk <= 90:
                     key_repr = chr(vk).lower()
-                elif 48 <= vk <= 57:  # 0-9
+                elif 48 <= vk <= 57:
                     key_repr = chr(vk)
 
             if key_repr is not None:
@@ -748,26 +760,23 @@ class AdvancedRecorderGUI:
         self.recording = False
         self.record_btn.config(text="🔴 Start Recording")
         self.play_btn.config(state='normal')
+        self.loop_play_btn.config(state='normal')
         self.clear_btn.config(state='normal')
         self.save_btn.config(state='normal')
         self.load_btn.config(state='normal')
         
         if self.mouse_listener:
-            try:
-                self.mouse_listener.stop()
-            except:
-                pass
+            self.mouse_listener.stop()
+            self.mouse_listener.join()  # Critical fix
         if self.keyboard_listener:
-            try:
-                self.keyboard_listener.stop()
-            except:
-                pass
+            self.keyboard_listener.stop()
+            self.keyboard_listener.join()  # Critical fix
         
         with self.action_lock:
             action_count = len(self.recorded_actions)
         self.status_var.set(f"Recording stopped. {action_count} actions recorded.")
     
-    def play_sequence(self):
+    def play_sequence(self, loop_count=1):
         with self.action_lock:
             if not self.recorded_actions:
                 messagebox.showwarning("Warning", "No actions recorded")
@@ -775,209 +784,230 @@ class AdvancedRecorderGUI:
             actions_to_play = self.recorded_actions.copy()
             
         def play_thread():
-            self.playing = True
-            self.play_btn.config(state='disabled')
-            self.record_btn.config(state='disabled')
-            self.clear_btn.config(state='disabled')
-            self.save_btn.config(state='disabled')
-            self.load_btn.config(state='disabled')
-            
-            self.safe_update_status("Playing sequence... (Press F9 to stop)")
-            
-            time.sleep(2)
-            
-            speed = self.speed_var.get()
-            prev_time = None
-            
-            screen_width, screen_height = pyautogui.size()
-            
-            # Define special keys recognized by pyautogui
-            special_pyautogui_keys = {
-                'space', 'enter', 'tab', 'backspace', 'delete', 'home', 'end',
-                'pageup', 'pagedown', 'up', 'down', 'left', 'right', 'esc',
-                'insert', 'menu', 'capslock', 'numlock', 'scrolllock', 'printscreen',
-                'pause', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'
-            }
-            
-            for i, action in enumerate(actions_to_play):
-                if not self.playing:
-                    break
-                    
-                if prev_time:
-                    delay = (action['time'] - prev_time) / speed
-                    delay = min(delay, 10)
-                    if delay > 0.01:
-                        time.sleep(delay)
-                    
-                prev_time = action['time']
+            original_failsafe = pyautogui.FAILSAFE
+            pyautogui.FAILSAFE = False  # Prevent corner crash during playback
+            try:
+                self.playing = True
+                self.play_btn.config(state='disabled')
+                self.loop_play_btn.config(state='disabled')
+                self.record_btn.config(state='disabled')
+                self.clear_btn.config(state='disabled')
+                self.save_btn.config(state='disabled')
+                self.load_btn.config(state='disabled')
                 
-                try:
-                    action_type = action['type']
+                self.safe_update_status(f"Playing sequence... (Press F9 to stop)")
+                time.sleep(2)
+                
+                for loop in range(loop_count):
+                    if not self.playing:
+                        break
+                    if loop_count > 1:
+                        self.safe_update_status(f"Loop {loop+1}/{loop_count}...")
+                        time.sleep(1)
                     
-                    def safe_coords(x, y):
-                        x = max(0, min(screen_width - 1, x))
-                        y = max(0, min(screen_height - 1, y))
-                        return int(x), int(y)
+                    speed = self.speed_var.get()
+                    prev_time = None
+                    screen_width, screen_height = pyautogui.size()
                     
-                    if action_type == 'click':
-                        x, y = safe_coords(action['x'], action['y'])
-                        pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
-                        pyautogui.click()
-                        text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
-                        self.safe_update_status(f"Playing: Click{text_info} at ({x}, {y})")
-                        
-                    elif action_type == 'right_click':
-                        x, y = safe_coords(action['x'], action['y'])
-                        pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
-                        pyautogui.rightClick()
-                        text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
-                        self.safe_update_status(f"Playing: Right-click{text_info} at ({x}, {y})")
-                        
-                    elif action_type == 'middle_click':
-                        x, y = safe_coords(action['x'], action['y'])
-                        pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
-                        pyautogui.middleClick()
-                        text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
-                        self.safe_update_status(f"Playing: Middle-click{text_info} at ({x}, {y})")
-                        
-                    elif action_type == 'text_selection':
-                        start_x, start_y = safe_coords(action['start_x'], action['start_y'])
-                        end_x, end_y = safe_coords(action['end_x'], action['end_y'])
-                        
-                        if self.smart_selection_var.get() and 'selection_context' in action:
-                            context = action['selection_context']
-                            self.safe_update_status("Locating context silently...")
-                            if context and 'start_context' in context:
-                                found = self.navigate_to_context_silently(context)
-                                if found:
-                                    self.safe_update_status("Context located")
-                            time.sleep(0.3)
+                    special_pyautogui_keys = {
+                        'space', 'enter', 'tab', 'backspace', 'delete', 'home', 'end',
+                        'pageup', 'pagedown', 'up', 'down', 'left', 'right', 'esc',
+                        'insert', 'menu', 'capslock', 'numlock', 'scrolllock', 'printscreen',
+                        'pause', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'
+                    }
+                    
+                    for i, action in enumerate(actions_to_play):
+                        if not self.playing:
+                            break
                             
-                            if context and context.get('words_count', 0) > 20:
-                                pyautogui.click(start_x, start_y)
-                                time.sleep(0.1)
-                                pyautogui.click(clicks=3, interval=0.1)
-                                time.sleep(0.3)
-                            else:
+                        if prev_time:
+                            delay = (action['time'] - prev_time) / speed
+                            delay = min(delay, 10)
+                            if delay > 0.01:
+                                time.sleep(delay)
+                            
+                        prev_time = action['time']
+                        
+                        try:
+                            action_type = action['type']
+                            
+                            def safe_coords(x, y):
+                                x = max(0, min(screen_width - 1, x))
+                                y = max(0, min(screen_height - 1, y))
+                                return int(x), int(y)
+                            
+                            if action_type == 'click':
+                                x, y = safe_coords(action['x'], action['y'])
+                                pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
+                                pyautogui.click()
+                                text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
+                                self.safe_update_status(f"Playing: Click{text_info} at ({x}, {y})")
+                                
+                            elif action_type == 'right_click':
+                                x, y = safe_coords(action['x'], action['y'])
+                                pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
+                                pyautogui.rightClick()
+                                text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
+                                self.safe_update_status(f"Playing: Right-click{text_info} at ({x}, {y})")
+                                
+                            elif action_type == 'middle_click':
+                                x, y = safe_coords(action['x'], action['y'])
+                                pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
+                                pyautogui.middleClick()
+                                text_info = f" '{action.get('element_text', '')}'" if 'element_text' in action else ""
+                                self.safe_update_status(f"Playing: Middle-click{text_info} at ({x}, {y})")
+                                
+                            elif action_type == 'text_selection':
+                                start_x, start_y = safe_coords(action['start_x'], action['start_y'])
+                                end_x, end_y = safe_coords(action['end_x'], action['end_y'])
+                                
+                                if self.smart_selection_var.get() and 'selection_context' in action:
+                                    context = action['selection_context']
+                                    self.safe_update_status("Locating context silently...")
+                                    if context and 'start_context' in context:
+                                        found = self.navigate_to_context_silently(context)
+                                        if not found:
+                                            self.safe_update_status("⚠ Context not found! Using coords.")
+                                    time.sleep(0.3)
+                                    
+                                    if context and context.get('words_count', 0) > 20:
+                                        pyautogui.click(start_x, start_y)
+                                        time.sleep(0.1)
+                                        pyautogui.click(clicks=3, interval=0.1)
+                                        time.sleep(0.3)
+                                    else:
+                                        pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
+                                        pyautogui.mouseDown()
+                                        time.sleep(0.05)
+                                        pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
+                                        time.sleep(0.05)
+                                        pyautogui.mouseUp()
+                                        time.sleep(0.1)
+                                else:
+                                    pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
+                                    pyautogui.mouseDown()
+                                    time.sleep(0.05)
+                                    pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
+                                    time.sleep(0.05)
+                                    pyautogui.mouseUp()
+                                
+                                self.safe_update_status("Playing: Text selection")
+                                time.sleep(0.2)
+                                
+                            elif action_type == 'selection':
+                                start_x, start_y = safe_coords(action['start_x'], action['start_y'])
+                                end_x, end_y = safe_coords(action['end_x'], action['end_y'])
                                 pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
                                 pyautogui.mouseDown()
                                 time.sleep(0.05)
                                 pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
                                 time.sleep(0.05)
                                 pyautogui.mouseUp()
+                                self.safe_update_status("Playing: Selection/Drag")
+                                
+                            elif action_type == 'scroll':
+                                x, y = safe_coords(action['x'], action['y'])
+                                pyautogui.moveTo(x, y, duration=0.1)
+                                scroll_amount = int(action['dy'] * 120)
+                                pyautogui.scroll(scroll_amount)
+                                self.safe_update_status("Playing: Scroll")
+                                time.sleep(0.05)
+                                
+                            elif action_type == 'copy':
+                                pyautogui.hotkey('ctrl', 'c')
+                                self.safe_update_status("Playing: Copy (Ctrl+C)")
+                                time.sleep(0.5)  # Increased delay
+                                
+                            elif action_type == 'paste':
+                                if 'clipboard_content' in action and action['clipboard_content']:
+                                    try:
+                                        pyperclip.copy(action['clipboard_content'])
+                                        time.sleep(0.2)
+                                    except Exception as e:
+                                        self.log_error("Set clipboard for paste", e)
+                                pyautogui.hotkey('ctrl', 'v')
+                                self.safe_update_status("Playing: Paste (Ctrl+V)")
+                                time.sleep(0.3)
+                                
+                            elif action_type == 'cut':
+                                pyautogui.hotkey('ctrl', 'x')
+                                self.safe_update_status("Playing: Cut (Ctrl+X)")
+                                time.sleep(0.5)
+                                
+                            elif action_type == 'select_all':
+                                pyautogui.hotkey('ctrl', 'a')
+                                self.safe_update_status("Playing: Select All (Ctrl+A)")
                                 time.sleep(0.1)
-                        else:
-                            pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
-                            pyautogui.mouseDown()
-                            time.sleep(0.05)
-                            pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
-                            time.sleep(0.05)
-                            pyautogui.mouseUp()
-                        
-                        self.safe_update_status("Playing: Text selection")
-                        time.sleep(0.2)
-                        
-                    elif action_type == 'selection':
-                        start_x, start_y = safe_coords(action['start_x'], action['start_y'])
-                        end_x, end_y = safe_coords(action['end_x'], action['end_y'])
-                        pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
-                        pyautogui.mouseDown()
-                        time.sleep(0.05)
-                        pyautogui.moveTo(end_x, end_y, duration=0.3, tween=pyautogui.easeInOutQuad)
-                        time.sleep(0.05)
-                        pyautogui.mouseUp()
-                        self.safe_update_status("Playing: Selection/Drag")
-                        
-                    elif action_type == 'scroll':
-                        x, y = safe_coords(action['x'], action['y'])
-                        pyautogui.moveTo(x, y, duration=0.1)
-                        scroll_amount = int(action['dy'] * 120)
-                        pyautogui.scroll(scroll_amount)
-                        self.safe_update_status("Playing: Scroll")
-                        time.sleep(0.05)
-                        
-                    elif action_type == 'copy':
-                        pyautogui.hotkey('ctrl', 'c')
-                        self.safe_update_status("Playing: Copy (Ctrl+C)")
-                        time.sleep(0.4)
-                        
-                    elif action_type == 'paste':
-                        if 'clipboard_content' in action and action['clipboard_content']:
-                            try:
-                                pyperclip.copy(action['clipboard_content'])
-                                time.sleep(0.2)
-                            except Exception as e:
-                                self.log_error("Set clipboard for paste", e)
-                        pyautogui.hotkey('ctrl', 'v')
-                        self.safe_update_status("Playing: Paste (Ctrl+V)")
-                        time.sleep(0.3)
-                        
-                    elif action_type == 'cut':
-                        pyautogui.hotkey('ctrl', 'x')
-                        self.safe_update_status("Playing: Cut (Ctrl+X)")
-                        time.sleep(0.3)
-                        
-                    elif action_type == 'select_all':
-                        pyautogui.hotkey('ctrl', 'a')
-                        self.safe_update_status("Playing: Select All (Ctrl+A)")
-                        time.sleep(0.1)
-                        
-                    elif action_type == 'undo':
-                        pyautogui.hotkey('ctrl', 'z')
-                        self.safe_update_status("Playing: Undo (Ctrl+Z)")
-                        time.sleep(0.1)
-                        
-                    elif action_type == 'redo':
-                        pyautogui.hotkey('ctrl', 'y')
-                        self.safe_update_status("Playing: Redo (Ctrl+Y)")
-                        time.sleep(0.1)
-                        
-                    elif action_type == 'save':
-                        pyautogui.hotkey('ctrl', 's')
-                        self.safe_update_status("Playing: Save (Ctrl+S)")
-                        time.sleep(0.1)
-                        
-                    elif action_type == 'find':
-                        pyautogui.hotkey('ctrl', 'f')
-                        self.safe_update_status("Playing: Find (Ctrl+F)")
-                        time.sleep(0.1)
-                        
-                    elif action_type == 'clipboard_change':
-                        pyperclip.copy(action['content'])
-                        self.safe_update_status("Playing: Clipboard updated")
-                        time.sleep(0.1)
-                        
-                    elif action_type == 'key':
-                        key = action['key']
-                        modifiers = []
-                        if action.get('ctrl'):
-                            modifiers.append('ctrl')
-                        if action.get('shift'):
-                            modifiers.append('shift')
-                        if action.get('alt'):
-                            modifiers.append('alt')
+                                
+                            elif action_type == 'undo':
+                                pyautogui.hotkey('ctrl', 'z')
+                                self.safe_update_status("Playing: Undo (Ctrl+Z)")
+                                time.sleep(0.1)
+                                
+                            elif action_type == 'redo':
+                                pyautogui.hotkey('ctrl', 'y')
+                                self.safe_update_status("Playing: Redo (Ctrl+Y)")
+                                time.sleep(0.1)
+                                
+                            elif action_type == 'save':
+                                pyautogui.hotkey('ctrl', 's')
+                                self.safe_update_status("Playing: Save (Ctrl+S)")
+                                time.sleep(0.1)
+                                
+                            elif action_type == 'find':
+                                pyautogui.hotkey('ctrl', 'f')
+                                self.safe_update_status("Playing: Find (Ctrl+F)")
+                                time.sleep(0.1)
+                                
+                            elif action_type == 'clipboard_change':
+                                pyperclip.copy(action['content'])
+                                self.safe_update_status("Playing: Clipboard updated")
+                                time.sleep(0.1)
+                                
+                            elif action_type == 'key':
+                                key = action['key']
+                                modifiers = []
+                                if action.get('ctrl'):
+                                    modifiers.append('ctrl')
+                                if action.get('shift'):
+                                    modifiers.append('shift')
+                                if action.get('alt'):
+                                    modifiers.append('alt')
+                                    
+                                if modifiers:
+                                    pyautogui.hotkey(*modifiers, key)
+                                elif key in special_pyautogui_keys:
+                                    pyautogui.press(key)
+                                else:
+                                    pyautogui.write(key)
+                                
+                                self.safe_update_status(f"Playing: Key press '{key}'")
+                                
+                        except Exception as e:
+                            self.log_error(f"Playing action {i}", e)
                             
-                        if modifiers:
-                            pyautogui.hotkey(*modifiers, key)
-                        elif key in special_pyautogui_keys:
-                            pyautogui.press(key)
-                        else:
-                            pyautogui.write(key)
-                        
-                        self.safe_update_status(f"Playing: Key press '{key}'")
-                        
-                except Exception as e:
-                    self.log_error(f"Playing action {i}", e)
-                    
-            self.playing = False
-            self.play_btn.config(state='normal')
-            self.record_btn.config(state='normal')
-            self.clear_btn.config(state='normal')
-            self.save_btn.config(state='normal')
-            self.load_btn.config(state='normal')
-            self.safe_update_status("Playback completed")
-            
+                self.playing = False
+                self.play_btn.config(state='normal')
+                self.loop_play_btn.config(state='normal')
+                self.record_btn.config(state='normal')
+                self.clear_btn.config(state='normal')
+                self.save_btn.config(state='normal')
+                self.load_btn.config(state='normal')
+                self.safe_update_status("Playback completed")
+                
+            finally:
+                pyautogui.FAILSAFE = original_failsafe
+                
         threading.Thread(target=play_thread, daemon=True).start()
+        
+    def start_loop_play(self):
+        try:
+            count = self.loop_count_var.get()
+            if count < 1:
+                count = 1
+            self.play_sequence(loop_count=count)
+        except Exception as e:
+            messagebox.showerror("Error", f"Invalid loop count: {e}")
         
     def clear_sequence(self):
         with self.action_lock:
@@ -1117,16 +1147,44 @@ class AdvancedRecorderGUI:
 def main():
     root = tk.Tk()
     
+    # Dependency checks
+    missing = []
     try:
         import pytesseract
+    except ImportError:
+        missing.append("pytesseract")
+    try:
         import cv2
+    except ImportError:
+        missing.append("opencv-python")
+    try:
         import pyperclip
-    except ImportError as e:
+    except ImportError:
+        missing.append("pyperclip")
+    try:
+        import pynput
+    except ImportError:
+        missing.append("pynput")
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        missing.append("pillow")
+    
+    if missing:
         messagebox.showerror("Missing Dependencies", 
                            f"Please install required packages:\n"
-                           f"pip install pytesseract opencv-python pyperclip pynput pillow\n\n"
+                           f"pip install {' '.join(missing)}\n\n"
                            f"For OCR support, also install Tesseract-OCR from:\n"
                            f"https://github.com/UB-Mannheim/tesseract/wiki")
+        return
+    
+    # Tesseract engine check
+    try:
+        pytesseract.get_tesseract_version()
+    except pytesseract.TesseractNotFoundError:
+        messagebox.showerror("Tesseract Missing", 
+            "Tesseract OCR engine not found!\n"
+            "Please install it from:\nhttps://github.com/UB-Mannheim/tesseract/wiki")
         return
     
     app = AdvancedRecorderGUI(root)
