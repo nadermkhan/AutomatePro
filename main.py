@@ -660,17 +660,56 @@ class AdvancedRecorderGUI:
                     return
 
             key_repr = None
-            if hasattr(key, 'char') and key.char and key.char.isprintable():
+
+            # Handle special keys first
+            if hasattr(key, 'name'):
+                name = key.name.lower()
+                special_keys = {
+                    'space': 'space',
+                    'enter': 'enter',
+                    'return': 'enter',
+                    'tab': 'tab',
+                    'backspace': 'backspace',
+                    'delete': 'delete',
+                    'home': 'home',
+                    'end': 'end',
+                    'page_up': 'pageup',
+                    'page_down': 'pagedown',
+                    'up': 'up',
+                    'down': 'down',
+                    'left': 'left',
+                    'right': 'right',
+                    'escape': 'esc',
+                    'esc': 'esc',
+                    'insert': 'insert',
+                    'menu': 'menu',
+                    'caps_lock': 'capslock',
+                    'num_lock': 'numlock',
+                    'scroll_lock': 'scrolllock',
+                    'print_screen': 'printscreen',
+                    'pause': 'pause',
+                    'f1': 'f1', 'f2': 'f2', 'f3': 'f3', 'f4': 'f4',
+                    'f5': 'f5', 'f6': 'f6', 'f7': 'f7', 'f8': 'f8',
+                    'f9': 'f9', 'f10': 'f10', 'f11': 'f11', 'f12': 'f12',
+                }
+                if name in special_keys:
+                    key_repr = special_keys[name]
+                else:
+                    # Skip unknown special keys
+                    return
+
+            # Handle printable characters
+            elif hasattr(key, 'char') and key.char and (key.char.isprintable() or key.char in ['\t', '\n', '\r']):
                 key_repr = key.char
-            elif hasattr(key, 'name'):
-                key_repr = key.name
+
+            # Fallback for virtual keys (letters/numbers)
             elif vk is not None:
-                if 65 <= vk <= 90:
+                if 65 <= vk <= 90:  # A-Z
                     key_repr = chr(vk).lower()
-                elif 48 <= vk <= 57:
+                elif 48 <= vk <= 57:  # 0-9
                     key_repr = chr(vk)
 
-            if key_repr:
+            if key_repr is not None:
                 action = {
                     'type': 'key',
                     'key': key_repr,
@@ -751,6 +790,14 @@ class AdvancedRecorderGUI:
             prev_time = None
             
             screen_width, screen_height = pyautogui.size()
+            
+            # Define special keys recognized by pyautogui
+            special_pyautogui_keys = {
+                'space', 'enter', 'tab', 'backspace', 'delete', 'home', 'end',
+                'pageup', 'pagedown', 'up', 'down', 'left', 'right', 'esc',
+                'insert', 'menu', 'capslock', 'numlock', 'scrolllock', 'printscreen',
+                'pause', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'
+            }
             
             for i, action in enumerate(actions_to_play):
                 if not self.playing:
@@ -902,27 +949,20 @@ class AdvancedRecorderGUI:
                         
                     elif action_type == 'key':
                         key = action['key']
-                        if key.startswith('Key.'):
-                            key_name = key.replace('Key.', '')
-                            if key_name in ['space', 'enter', 'tab', 'backspace', 'delete', 
-                                          'home', 'end', 'page_up', 'page_down', 'up', 'down', 
-                                          'left', 'right', 'escape', 'esc']:
-                                if key_name == 'esc':
-                                    key_name = 'escape'
-                                pyautogui.press(key_name)
-                        else:
-                            modifiers = []
-                            if action.get('ctrl'):
-                                modifiers.append('ctrl')
-                            if action.get('shift'):
-                                modifiers.append('shift')
-                            if action.get('alt'):
-                                modifiers.append('alt')
+                        modifiers = []
+                        if action.get('ctrl'):
+                            modifiers.append('ctrl')
+                        if action.get('shift'):
+                            modifiers.append('shift')
+                        if action.get('alt'):
+                            modifiers.append('alt')
                             
-                            if modifiers:
-                                pyautogui.hotkey(*modifiers, key)
-                            else:
-                                pyautogui.write(key)
+                        if modifiers:
+                            pyautogui.hotkey(*modifiers, key)
+                        elif key in special_pyautogui_keys:
+                            pyautogui.press(key)
+                        else:
+                            pyautogui.write(key)
                         
                         self.safe_update_status(f"Playing: Key press '{key}'")
                         
@@ -1090,7 +1130,7 @@ def main():
         return
     
     app = AdvancedRecorderGUI(root)
-    root.mainloop()
+    root.mainloop() 
 
 if __name__ == "__main__":
     main()
