@@ -7,19 +7,15 @@ import threading
 import json
 from pynput import mouse, keyboard
 import queue
-import pytesseract
 from PIL import ImageGrab
-import cv2
-import numpy as np
 import re
 from collections import deque
-from difflib import SequenceMatcher
 
 class AdvancedRecorderGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("AutomatePro - Smart Context-Aware Mode")
-        self.root.geometry("900x900")
+        self.root.title("AutomatePro - Universal Smart Recorder")
+        self.root.geometry("950x950")
         
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.05
@@ -64,13 +60,19 @@ class AdvancedRecorderGUI:
         self.debug_mode = False
         self.error_log = []
         
-        # Smart Context Detection
-        self.current_context = "mixed"  # "excel", "absolute", "mixed"
+
+        self.current_context = "absolute"  # Default to absolute for safety
+        self.current_app_type = "unknown"
         self.last_arrow_key_time = 0
         self.arrow_key_count = 0
         self.last_copy_paste_time = 0
         self.context_switch_times = deque(maxlen=5)
         self.recent_actions = deque(maxlen=20)
+        self.last_window_check = 0
+        self.cached_window_type = "unknown"
+        
+
+        self.clipboard_snapshots = {}  # Store clipboard content by action ID
         
         self.setup_gui()
         
@@ -78,17 +80,22 @@ class AdvancedRecorderGUI:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        title_label = ttk.Label(main_frame, text="AutomatePro - Dynamic Clipboard Mode", 
+        title_label = ttk.Label(main_frame, text="AutomatePro - Universal Smart Recorder", 
                                font=('Arial', 16, 'bold'))
         title_label.grid(row=0, column=0, columnspan=4, pady=10)
         
-        # Context indicator
+
         context_frame = ttk.Frame(main_frame)
         context_frame.grid(row=1, column=0, columnspan=4, pady=5)
-        ttk.Label(context_frame, text="Current Context:", font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
-        self.context_label = ttk.Label(context_frame, text="MIXED", 
-                                       font=('Arial', 10), foreground='blue')
+        ttk.Label(context_frame, text="Mode:", font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
+        self.context_label = ttk.Label(context_frame, text="ABSOLUTE", 
+                                       font=('Arial', 10), foreground='orange')
         self.context_label.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(context_frame, text="| App:", font=('Arial', 10)).pack(side=tk.LEFT, padx=5)
+        self.app_type_label = ttk.Label(context_frame, text="UNKNOWN", 
+                                        font=('Arial', 10), foreground='gray')
+        self.app_type_label.pack(side=tk.LEFT, padx=5)
         
         control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="10")
         control_frame.grid(row=2, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
@@ -116,7 +123,7 @@ class AdvancedRecorderGUI:
         ttk.Spinbox(loop_frame, from_=1, to=100, width=5, textvariable=self.loop_count_var).pack(side=tk.LEFT, padx=5)
         ttk.Label(loop_frame, text="times").pack(side=tk.LEFT)
         
-        options_frame = ttk.LabelFrame(main_frame, text="Smart Detection Options", padding="10")
+        options_frame = ttk.LabelFrame(main_frame, text="Recording Options", padding="10")
         options_frame.grid(row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         self.record_keyboard_var = tk.BooleanVar(value=True)
@@ -131,26 +138,44 @@ class AdvancedRecorderGUI:
         ttk.Checkbutton(options_frame, text="Scroll", 
                        variable=self.record_scroll_var).grid(row=0, column=2, padx=5)
         
-        self.smart_context_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="🧠 Auto-Detect Context (Excel/Absolute)", 
-                       variable=self.smart_context_var,
-                       command=self.toggle_smart_mode).grid(row=1, column=0, padx=5, columnspan=2)
-        
         self.record_clipboard_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Clipboard", 
-                       variable=self.record_clipboard_var).grid(row=1, column=2, padx=5)
+                       variable=self.record_clipboard_var).grid(row=0, column=3, padx=5)
         
-        # Context detection sensitivity
-        sensitivity_frame = ttk.Frame(options_frame)
-        sensitivity_frame.grid(row=2, column=0, columnspan=3, pady=5)
-        ttk.Label(sensitivity_frame, text="Excel Detection Sensitivity:").pack(side=tk.LEFT, padx=5)
-        self.sensitivity_var = tk.IntVar(value=2)
-        ttk.Scale(sensitivity_frame, from_=1, to=5, variable=self.sensitivity_var, 
-                 orient=tk.HORIZONTAL, length=150).pack(side=tk.LEFT, padx=5)
-        ttk.Label(sensitivity_frame, text="(1=Low, 5=High)").pack(side=tk.LEFT)
+
+        mode_frame = ttk.LabelFrame(main_frame, text="Recording Mode", padding="10")
+        mode_frame.grid(row=4, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        
+        self.mode_var = tk.StringVar(value="smart")
+        
+        ttk.Radiobutton(mode_frame, text="🧠 Smart Auto-Detect (Recommended)", 
+                       variable=self.mode_var, value="smart",
+                       command=self.on_mode_change).grid(row=0, column=0, sticky=tk.W, padx=10)
+        
+        ttk.Radiobutton(mode_frame, text="📊 Desktop Excel Mode (Relative Navigation)", 
+                       variable=self.mode_var, value="excel",
+                       command=self.on_mode_change).grid(row=1, column=0, sticky=tk.W, padx=10)
+        
+        ttk.Radiobutton(mode_frame, text="🎯 Absolute Mode (Web Apps, Click-based)", 
+                       variable=self.mode_var, value="absolute",
+                       command=self.on_mode_change).grid(row=2, column=0, sticky=tk.W, padx=10)
+        
+
+        smart_frame = ttk.Frame(mode_frame)
+        smart_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), padx=20, pady=5)
+        
+        self.web_app_priority_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(smart_frame, 
+                       text="🌐 Always use Absolute mode for browsers (Google Sheets, Apollo, etc.)",
+                       variable=self.web_app_priority_var).pack(anchor=tk.W)
+        
+        self.excel_click_record_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(smart_frame, 
+                       text="📌 Record clicks even in Excel mode (for menus/ribbons)",
+                       variable=self.excel_click_record_var).pack(anchor=tk.W)
         
         file_frame = ttk.LabelFrame(main_frame, text="File Operations", padding="10")
-        file_frame.grid(row=4, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        file_frame.grid(row=5, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         self.save_btn = ttk.Button(file_frame, text="Save", 
                                    command=self.save_sequence, width=20)
@@ -177,144 +202,181 @@ class AdvancedRecorderGUI:
         
         self.speed_scale.config(command=update_speed_label)
         
-        sequence_frame = ttk.LabelFrame(main_frame, text="Sequence Logs", padding="10")
-        sequence_frame.grid(row=5, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        sequence_frame = ttk.LabelFrame(main_frame, text="Recorded Actions", padding="10")
+        sequence_frame.grid(row=6, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         
-        self.sequence_text = scrolledtext.ScrolledText(sequence_frame, width=70, height=12)
+        self.sequence_text = scrolledtext.ScrolledText(sequence_frame, width=80, height=12)
         self.sequence_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # Debug log
-        debug_frame = ttk.LabelFrame(main_frame, text="Context Detection Log", padding="10")
-        debug_frame.grid(row=6, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+
+        debug_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding="10")
+        debug_frame.grid(row=7, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
-        self.debug_text = scrolledtext.ScrolledText(debug_frame, width=70, height=5)
+        self.debug_text = scrolledtext.ScrolledText(debug_frame, width=80, height=5)
         self.debug_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
         
-        self.status_var = tk.StringVar(value="Ready - Dynamic Clipboard Mode ENABLED")
+        self.status_var = tk.StringVar(value="Ready - Smart Mode Enabled")
         self.status_bar = ttk.Label(main_frame, textvariable=self.status_var, 
                                    relief=tk.SUNKEN, anchor=tk.W)
-        self.status_bar.grid(row=7, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        self.status_bar.grid(row=8, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         
         instructions = ttk.Label(main_frame, 
-                                text="Developed by Nader Mahbub Khan\n" +
-                                     "Press F9 to stop • Developed by Nader for Chandan Chakraborty",
+                                text="Press F9 to stop recording/playback • Developed by Nader Mahbub Khan for Chandan Chakraborty",
                                 font=('Arial', 9), foreground='gray')
-        instructions.grid(row=8, column=0, columnspan=4, pady=5)
+        instructions.grid(row=9, column=0, columnspan=4, pady=5)
         
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(5, weight=1)
+        main_frame.rowconfigure(6, weight=1)
         sequence_frame.columnconfigure(0, weight=1)
         sequence_frame.rowconfigure(0, weight=1)
         debug_frame.columnconfigure(0, weight=1)
         
         self.setup_global_hotkey()
     
-    def toggle_smart_mode(self):
-        if self.smart_context_var.get():
-            self.status_var.set("Smart Context Detection ENABLED")
-            self.log_debug("🧠 Smart detection ON")
-        else:
-            self.status_var.set("Smart Context Detection DISABLED - Manual mode")
-            self.log_debug("Manual mode activated")
+    def on_mode_change(self):
+        mode = self.mode_var.get()
+        if mode == "smart":
+            self.status_var.set("Smart Mode: Auto-detecting context")
+            self.log_debug("🧠 Smart mode enabled")
+        elif mode == "excel":
+            self.status_var.set("Excel Mode: Recording keyboard navigation, minimal clicks")
+            self.current_context = "excel"
+            self.log_debug("📊 Excel mode enabled")
+        elif mode == "absolute":
+            self.status_var.set("Absolute Mode: Recording all mouse positions and clicks")
+            self.current_context = "absolute"
+            self.log_debug("🎯 Absolute mode enabled")
     
-    def detect_context(self, action_type, key=None):
-        """Smart context detection based on recent actions"""
-        if not self.smart_context_var.get():
-            return "mixed"
+    def detect_window_type(self):
         
         current_time = time.time()
-        sensitivity = self.sensitivity_var.get()
         
-        # Add to recent actions
-        self.recent_actions.append({
-            'type': action_type,
-            'key': key,
-            'time': current_time
-        })
+
+        if current_time - self.last_window_check < 2.0:
+            return self.cached_window_type
         
-        # Count recent arrow keys (last 5 seconds)
-        recent_arrows = sum(1 for a in self.recent_actions 
-                           if a['time'] > current_time - 5 
-                           and a.get('key') in ['up', 'down', 'left', 'right'])
+        self.last_window_check = current_time
         
-        # Count recent copy/paste
-        recent_copy_paste = sum(1 for a in self.recent_actions 
-                               if a['time'] > current_time - 3 
-                               and a['type'] in ['copy', 'paste'])
+        try:
+
+            try:
+                import pygetwindow as gw
+                active_window = gw.getActiveWindow()
+                if active_window:
+                    title = active_window.title.lower()
+                    
+
+                    browsers = ['chrome', 'firefox', 'edge', 'safari', 'brave', 'opera', 'vivaldi']
+                    if any(browser in title for browser in browsers):
+
+                        if 'sheets' in title or 'google sheets' in title:
+                            self.cached_window_type = "web_sheets"
+                            return "web_sheets"
+                        elif 'apollo' in title:
+                            self.cached_window_type = "web_crm"
+                            return "web_crm"
+                        elif 'airtable' in title:
+                            self.cached_window_type = "web_database"
+                            return "web_database"
+                        else:
+                            self.cached_window_type = "web_browser"
+                            return "web_browser"
+                    
+
+                    if 'excel' in title and 'microsoft' in title:
+                        self.cached_window_type = "desktop_excel"
+                        return "desktop_excel"
+                    
+
+                    self.cached_window_type = "desktop_app"
+                    return "desktop_app"
+            except ImportError:
+
+                pass
+        except Exception as e:
+            self.log_error("Window detection", e)
         
-        # Count mouse clicks
-        recent_clicks = sum(1 for a in self.recent_actions 
-                           if a['time'] > current_time - 5 
-                           and a['type'] in ['click', 'right_click'])
+        self.cached_window_type = "unknown"
+        return "unknown"
+    
+    def detect_context(self, action_type, key=None):
         
-        # Excel detection logic
-        excel_score = 0
         
-        # Strong Excel indicators
-        if recent_arrows >= sensitivity:
-            excel_score += 3
-        if recent_copy_paste > 0 and recent_arrows > 0:
-            excel_score += 2
-        if action_type in ['copy', 'paste'] and (current_time - self.last_arrow_key_time) < 2:
-            excel_score += 2
+
+        if self.mode_var.get() == "excel":
+            return "excel"
+        elif self.mode_var.get() == "absolute":
+            return "absolute"
         
-        # Absolute mode indicators
-        absolute_score = 0
+
+        window_type = self.detect_window_type()
         
-        if key == 'n' and self.ctrl_pressed:  # Ctrl+N (new file)
-            absolute_score += 5
-            self.log_debug("🆕 Ctrl+N detected → ABSOLUTE mode")
-        if key == 't' and self.ctrl_pressed:  # Ctrl+T (new tab)
-            absolute_score += 5
-            self.log_debug("🌐 Ctrl+T detected → BROWSER mode")
-        if recent_clicks > sensitivity:
-            absolute_score += 2
-        if action_type == 'click':
-            absolute_score += 1
+
+        self.root.after(0, lambda: self.app_type_label.config(
+            text=window_type.replace('_', ' ').upper()
+        ))
         
-        # Determine context
-        if excel_score > absolute_score and excel_score >= 3:
-            new_context = "excel"
-            color = "green"
-            symbol = "📊"
-        elif absolute_score > excel_score and absolute_score >= 3:
-            new_context = "absolute"
-            color = "orange"
-            symbol = "🎯"
-        else:
-            new_context = "mixed"
-            color = "blue"
-            symbol = "🔀"
+
+        if self.web_app_priority_var.get():
+            if window_type in ['web_browser', 'web_sheets', 'web_crm', 'web_database']:
+                self.current_context = "absolute"
+                self.root.after(0, lambda: self.context_label.config(
+                    text="ABSOLUTE (WEB)", foreground='orange'
+                ))
+                return "absolute"
         
-        # Log context change
-        if new_context != self.current_context:
-            self.current_context = new_context
-            self.context_switch_times.append(current_time)
-            self.log_debug(f"{symbol} Context switched to: {new_context.upper()} (Excel:{excel_score}, Abs:{absolute_score})")
-            self.root.after(0, lambda: self.context_label.config(
-                text=new_context.upper(), 
-                foreground=color
-            ))
+
+        if window_type == "desktop_excel":
+            current_time = time.time()
+            
+
+            self.recent_actions.append({
+                'type': action_type,
+                'key': key,
+                'time': current_time
+            })
+            
+
+            recent_arrows = sum(1 for a in self.recent_actions 
+                               if a['time'] > current_time - 5 
+                               and a.get('key') in ['up', 'down', 'left', 'right'])
+            
+
+            recent_copy_paste = sum(1 for a in self.recent_actions 
+                                   if a['time'] > current_time - 3 
+                                   and a['type'] in ['copy', 'paste'])
+            
+
+            if recent_arrows >= 2 or (recent_copy_paste > 0 and recent_arrows > 0):
+                self.current_context = "excel"
+                self.root.after(0, lambda: self.context_label.config(
+                    text="EXCEL", foreground='green'
+                ))
+                return "excel"
         
-        return self.current_context
+
+        self.current_context = "absolute"
+        self.root.after(0, lambda: self.context_label.config(
+            text="ABSOLUTE", foreground='orange'
+        ))
+        return "absolute"
     
     def log_debug(self, message):
-        """Log to debug window"""
+        
         timestamp = time.strftime('%H:%M:%S')
         self.debug_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.debug_text.see(tk.END)
-        # Keep only last 50 lines
+
         lines = self.debug_text.get('1.0', tk.END).split('\n')
-        if len(lines) > 50:
-            self.debug_text.delete('1.0', '2.0')
+        if len(lines) > 100:
+            self.debug_text.delete('1.0', f'{len(lines)-100}.0')
     
     def log_error(self, context, error):
         error_msg = f"[{time.strftime('%H:%M:%S')}] {context}: {str(error)}"
         self.error_log.append(error_msg)
-        if self.debug_mode:
-            print(error_msg)
+        self.log_debug(f"❌ ERROR: {error_msg}")
         if len(self.error_log) > 100:
             self.error_log = self.error_log[-100:]
     
@@ -349,7 +411,8 @@ class AdvancedRecorderGUI:
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
         
-    def get_clipboard_safe(self, max_retries=5, delay=0.1):
+    def get_clipboard_safe(self, max_retries=3, delay=0.15):
+        
         for attempt in range(max_retries):
             try:
                 content = pyperclip.paste()
@@ -361,7 +424,22 @@ class AdvancedRecorderGUI:
                 time.sleep(delay)
         return ""
     
+    def set_clipboard_safe(self, content, max_retries=3, delay=0.15):
+        
+        for attempt in range(max_retries):
+            try:
+                pyperclip.copy(content)
+                time.sleep(0.1)  # Give system time to update
+                return True
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    self.log_error("Clipboard set", e)
+                    return False
+                time.sleep(delay)
+        return False
+    
     def monitor_clipboard(self):
+        
         while self.recording:
             try:
                 current_clipboard = self.get_clipboard_safe()
@@ -371,7 +449,7 @@ class AdvancedRecorderGUI:
                         self.clipboard_history.append(current_clipboard)
             except Exception as e:
                 self.log_error("Clipboard monitor", e)
-            time.sleep(0.2)
+            time.sleep(0.25)
             
     def toggle_recording(self):
         if not self.recording:
@@ -388,7 +466,8 @@ class AdvancedRecorderGUI:
         self.save_btn.config(state='disabled')
         self.load_btn.config(state='disabled')
         
-        self.status_var.set(f"🔴 Recording... (Dynamic Mode ON) - Press F9 to stop")
+        mode_text = self.mode_var.get().upper()
+        self.status_var.set(f"🔴 Recording ({mode_text} mode) - Press F9 to stop")
         
         with self.action_lock:
             self.recorded_actions = []
@@ -407,17 +486,19 @@ class AdvancedRecorderGUI:
         self.combo_detected = False
         self.selection_context = {}
         self.clipboard_history.clear()
+        self.clipboard_snapshots.clear()
         self.pending_combo_action = None
         self.copy_action_id = 0
-        self.current_context = "mixed"
         self.last_arrow_key_time = 0
         self.arrow_key_count = 0
         self.recent_actions.clear()
         
         self.last_clipboard = self.get_clipboard_safe()
         self.clipboard_before_copy = self.last_clipboard
-        
-        self.log_debug("🎬 Recording started - Dynamic clipboard mode active")
+        self.log_debug("Developed by Nader Mahbub Khan")
+        self.log_debug("Phone: 01642817116")
+        self.log_debug("==============================")
+        self.log_debug("🎬 Recording started")
         
         clipboard_thread = threading.Thread(target=self.monitor_clipboard, daemon=True)
         clipboard_thread.start()
@@ -433,17 +514,17 @@ class AdvancedRecorderGUI:
                 self.selection_start = (x, y, current_time)
                 self.drag_start_time = current_time
                 
-                # Detect context
+
                 context = self.detect_context('click')
                 
-                # Always record right/middle clicks with absolute coords
+
                 if button in [mouse.Button.right, mouse.Button.middle]:
                     action = {
                         'type': 'right_click' if button == mouse.Button.right else 'middle_click',
                         'x': x,
                         'y': y,
                         'time': current_time,
-                        'context': 'absolute'  # Always absolute for special clicks
+                        'context': context
                     }
                     self.add_action(action)
                     
@@ -457,9 +538,10 @@ class AdvancedRecorderGUI:
                     
                     context = self.detect_context('click')
                     
+
                     if distance > 10 and duration > 0.1:
-                        # Only record selection if in absolute mode
-                        if context != "excel":
+
+                        if context != "excel" or self.excel_click_record_var.get():
                             action = {
                                 'type': 'selection',
                                 'start_x': start_x,
@@ -472,8 +554,8 @@ class AdvancedRecorderGUI:
                             }
                             self.add_action(action)
                     else:
-                        # Single click - only record if not in Excel mode
-                        if context != "excel":
+
+                        if context != "excel" or self.excel_click_record_var.get():
                             action = {
                                 'type': 'click',
                                 'x': start_x,
@@ -495,18 +577,17 @@ class AdvancedRecorderGUI:
             current_time = time.time()
             context = self.detect_context('scroll')
             
-            # Only record scroll if not in Excel mode
-            if context != "excel":
-                action = {
-                    'type': 'scroll',
-                    'x': x,
-                    'y': y,
-                    'dx': dx,
-                    'dy': dy,
-                    'time': current_time,
-                    'context': context
-                }
-                self.add_action(action)
+
+            action = {
+                'type': 'scroll',
+                'x': x,
+                'y': y,
+                'dx': dx,
+                'dy': dy,
+                'time': current_time,
+                'context': context
+            }
+            self.add_action(action)
             
         def on_key_press(key):
             if not self.recording or not self.record_keyboard_var.get():
@@ -527,7 +608,7 @@ class AdvancedRecorderGUI:
                 self.alt_pressed = True
                 return
 
-            # Track arrow keys for Excel detection
+
             key_name = None
             if hasattr(key, 'name'):
                 key_name = key.name.lower()
@@ -553,17 +634,20 @@ class AdvancedRecorderGUI:
                     }
                     self.add_action(action)
 
-                    # Just capture a preview for display, NOT for playback
+
                     def delayed_capture(copy_id):
-                        time.sleep(1.2)
+                        time.sleep(1.5)  # Increased delay for reliability
                         new_clip = self.get_clipboard_safe()
-                        if new_clip != self.clipboard_before_copy:
+                        if new_clip and new_clip != self.clipboard_before_copy:
+
+                            self.clipboard_snapshots[copy_id] = new_clip
+                            
                             with self.action_lock:
                                 for act in reversed(self.recorded_actions):
                                     if act.get('_id') == copy_id:
-                                        # Only store preview for display
                                         preview = new_clip[:50] + "..." if len(new_clip) > 50 else new_clip
                                         act['preview'] = preview
+                                        act['content'] = new_clip  # Store full content
                                         break
                             self.root.after(0, self.update_sequence_display)
 
@@ -574,73 +658,85 @@ class AdvancedRecorderGUI:
                     self.last_copy_paste_time = current_time
                     context = self.detect_context('paste')
                     
-                    # ALWAYS use current clipboard for ALL contexts
+
+                    current_clip = self.get_clipboard_safe()
+                    
                     action = {
                         'type': 'paste',
                         'time': current_time,
                         'context': context,
-                        'dynamic': True  # Flag to indicate dynamic clipboard use
+                        'content': current_clip,  # Store what will be pasted
+                        'dynamic': True
                     }
                     
                     self.add_action(action)
-                    self.log_debug(f"📋 Paste recorded - will use CURRENT clipboard on playback")
+                    self.log_debug(f"📋 Paste recorded (will use current clipboard)")
                     return
 
                 elif vk == 88:  # 'X' - Cut
                     self.clipboard_before_copy = self.get_clipboard_safe()
                     context = self.detect_context('cut')
-                    action = {'type': 'cut', 'time': current_time, 'context': context}
+                    cut_id = self.copy_action_id + 1
+                    self.copy_action_id = cut_id
+                    
+                    action = {
+                        'type': 'cut',
+                        'time': current_time,
+                        'context': context,
+                        '_id': cut_id
+                    }
                     self.add_action(action)
 
-                    def capture_cut():
-                        time.sleep(1.0)
+                    def capture_cut(cut_id):
+                        time.sleep(1.2)
                         new_clip = self.get_clipboard_safe()
-                        if new_clip != self.clipboard_before_copy:
+                        if new_clip and new_clip != self.clipboard_before_copy:
+                            self.clipboard_snapshots[cut_id] = new_clip
                             with self.action_lock:
-                                if self.recorded_actions and self.recorded_actions[-1]['type'] == 'cut':
-                                    preview = new_clip[:50] + "..." if len(new_clip) > 50 else new_clip
-                                    self.recorded_actions[-1]['preview'] = preview
+                                for act in reversed(self.recorded_actions):
+                                    if act.get('_id') == cut_id:
+                                        preview = new_clip[:50] + "..." if len(new_clip) > 50 else new_clip
+                                        act['preview'] = preview
+                                        act['content'] = new_clip
+                                        break
                             self.root.after(0, self.update_sequence_display)
 
-                    threading.Thread(target=capture_cut, daemon=True).start()
+                    threading.Thread(target=capture_cut, args=(cut_id,), daemon=True).start()
                     return
                 
-                elif vk == 78:  # 'N' - Ctrl+N (New file/window)
+
+                elif vk == 78:  # 'N' - New
                     context = self.detect_context('key', 'n')
                     action = {'type': 'new_file', 'time': current_time, 'context': context}
                     self.add_action(action)
-                    self.log_debug("📄 Ctrl+N (New File) detected")
                     return
-                
-                elif vk == 84:  # 'T' - Ctrl+T (New tab)
+                elif vk == 84:  # 'T' - New tab
                     context = self.detect_context('key', 't')
                     action = {'type': 'new_tab', 'time': current_time, 'context': context}
                     self.add_action(action)
-                    self.log_debug("🌐 Ctrl+T (New Tab) detected")
                     return
-
-                elif vk == 65:  # 'A'
+                elif vk == 65:  # 'A' - Select all
                     action = {'type': 'select_all', 'time': current_time}
                     self.add_action(action)
                     return
-                elif vk == 90:  # 'Z'
+                elif vk == 90:  # 'Z' - Undo
                     action = {'type': 'undo', 'time': current_time}
                     self.add_action(action)
                     return
-                elif vk == 89:  # 'Y'
+                elif vk == 89:  # 'Y' - Redo
                     action = {'type': 'redo', 'time': current_time}
                     self.add_action(action)
                     return
-                elif vk == 83:  # 'S'
+                elif vk == 83:  # 'S' - Save
                     action = {'type': 'save', 'time': current_time}
                     self.add_action(action)
                     return
-                elif vk == 70:  # 'F'
+                elif vk == 70:  # 'F' - Find
                     action = {'type': 'find', 'time': current_time}
                     self.add_action(action)
                     return
 
-            # Regular key handling
+
             key_repr = None
 
             if hasattr(key, 'name'):
@@ -800,15 +896,15 @@ class AdvancedRecorderGUI:
                         
                         try:
                             action_type = action['type']
-                            context = action.get('context', 'mixed')
+                            context = action.get('context', 'absolute')
                             
                             def safe_coords(x, y):
                                 x = max(0, min(screen_width - 1, x))
                                 y = max(0, min(screen_height - 1, y))
                                 return int(x), int(y)
                             
-                            # Only execute mouse actions if not in Excel context
-                            if action_type == 'click' and context != 'excel':
+
+                            if action_type == 'click':
                                 x, y = safe_coords(action['x'], action['y'])
                                 pyautogui.moveTo(x, y, duration=0.2, tween=pyautogui.easeInOutQuad)
                                 pyautogui.click()
@@ -826,7 +922,7 @@ class AdvancedRecorderGUI:
                                 pyautogui.middleClick()
                                 self.safe_update_status(f"Playing: Middle-click at ({x}, {y})")
                                 
-                            elif action_type == 'selection' and context != 'excel':
+                            elif action_type == 'selection':
                                 start_x, start_y = safe_coords(action['start_x'], action['start_y'])
                                 end_x, end_y = safe_coords(action['end_x'], action['end_y'])
                                 pyautogui.moveTo(start_x, start_y, duration=0.2, tween=pyautogui.easeInOutQuad)
@@ -837,7 +933,7 @@ class AdvancedRecorderGUI:
                                 pyautogui.mouseUp()
                                 self.safe_update_status("Playing: Selection/Drag")
                                 
-                            elif action_type == 'scroll' and context != 'excel':
+                            elif action_type == 'scroll':
                                 x, y = safe_coords(action['x'], action['y'])
                                 pyautogui.moveTo(x, y, duration=0.1)
                                 scroll_amount = int(action['dy'] * 120)
@@ -847,22 +943,30 @@ class AdvancedRecorderGUI:
                                 
                             elif action_type == 'copy':
                                 pyautogui.hotkey('ctrl', 'c')
-                                ctx_tag = f" [{context.upper()}]"
-                                self.safe_update_status(f"Playing: Copy{ctx_tag}")
-                                time.sleep(0.6)
+                                self.safe_update_status("Playing: Copy (Ctrl+C)")
+                                time.sleep(0.8)  # Wait for clipboard to update
                                 
                             elif action_type == 'paste':
-                                # ALWAYS use current clipboard content
+
                                 current_clip = self.get_clipboard_safe()
+                                
+
+
+                                if 'content' in action and action['content']:
+                                    if not action.get('dynamic', False):
+
+                                        self.set_clipboard_safe(action['content'])
+                                        time.sleep(0.2)
+                                
                                 preview = current_clip[:30] + "..." if len(current_clip) > 30 else current_clip
-                                self.safe_update_status(f"Playing: Paste [DYNAMIC: {preview}]")
+                                self.safe_update_status(f"Playing: Paste [{preview}]")
                                 pyautogui.hotkey('ctrl', 'v')
-                                time.sleep(0.3)
+                                time.sleep(0.4)
                                 
                             elif action_type == 'cut':
                                 pyautogui.hotkey('ctrl', 'x')
                                 self.safe_update_status("Playing: Cut (Ctrl+X)")
-                                time.sleep(0.5)
+                                time.sleep(0.6)
                             
                             elif action_type == 'new_file':
                                 pyautogui.hotkey('ctrl', 'n')
@@ -919,9 +1023,9 @@ class AdvancedRecorderGUI:
                                 ctx_tag = f" [{context.upper()}]" if key in ['up','down','left','right'] else ""
                                 self.safe_update_status(f"Playing: Key '{key}'{ctx_tag}")
                                 
-                                # Extra delay for arrow keys in Excel context
+
                                 if key in ['up', 'down', 'left', 'right'] and context == 'excel':
-                                    time.sleep(0.25)
+                                    time.sleep(0.3)
                                 
                         except Exception as e:
                             self.log_error(f"Playing action {i}", e)
@@ -954,8 +1058,9 @@ class AdvancedRecorderGUI:
             self.recorded_actions = []
         self.sequence_text.delete('1.0', tk.END)
         self.debug_text.delete('1.0', tk.END)
-        self.current_context = "mixed"
-        self.context_label.config(text="MIXED", foreground="blue")
+        self.clipboard_snapshots.clear()
+        self.current_context = "absolute"
+        self.context_label.config(text="ABSOLUTE", foreground="orange")
         self.status_var.set("Sequence cleared")
         
     def save_sequence(self):
@@ -1003,9 +1108,9 @@ class AdvancedRecorderGUI:
         
         for i, action in enumerate(actions_copy, 1):
             action_type = action.get('type', 'unknown')
-            context = action.get('context', 'mixed')
+            context = action.get('context', 'absolute')
             
-            # Context icon
+
             if context == 'excel':
                 ctx_icon = "📊"
             elif context == 'absolute':
@@ -1030,7 +1135,12 @@ class AdvancedRecorderGUI:
                     text += f" → '{action['preview']}'"
                 text += "\n"
             elif action_type == 'paste':
-                text = f"{i}. {ctx_icon} Paste (Ctrl+V) [DYNAMIC - uses current clipboard]\n"
+                text = f"{i}. {ctx_icon} Paste (Ctrl+V)"
+                if action.get('dynamic'):
+                    text += " [Dynamic]"
+                if 'preview' in action:
+                    text += f" → '{action.get('preview', 'current clipboard')}'"
+                text += "\n"
             elif action_type == 'cut':
                 text = f"{i}. {ctx_icon} Cut (Ctrl+X)"
                 if 'preview' in action:
@@ -1075,14 +1185,6 @@ def main():
     
     missing = []
     try:
-        import pytesseract
-    except ImportError:
-        missing.append("pytesseract")
-    try:
-        import cv2
-    except ImportError:
-        missing.append("opencv-python")
-    try:
         import pyperclip
     except ImportError:
         missing.append("pyperclip")
@@ -1098,6 +1200,13 @@ def main():
     if missing:
         messagebox.showwarning("Missing Dependencies", 
                            f"Install: pip install {' '.join(missing)}")
+    
+
+    try:
+        import pygetwindow
+    except ImportError:
+        messagebox.showinfo("Optional Dependency", 
+                          "For enhanced window detection, install:\npip install pygetwindow")
     
     app = AdvancedRecorderGUI(root)
     root.mainloop() 
