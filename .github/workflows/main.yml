@@ -36,10 +36,11 @@ jobs:
         pip install pyperclip
         pip install pyautogui
         pip install opencv-python
+        pip install pygetwindow
     
     - name: Build EXE with PyInstaller
       run: |
-        pyinstaller --onefile --windowed --name="AutomatePro" --add-data="*.py;." --hidden-import="pytesseract" --hidden-import="cv2" --hidden-import="tkinter" --hidden-import="pyperclip"  --hidden-import="pyautogui" main.py
+        pyinstaller --onefile --windowed --name="AutomatePro" --add-data="*.py;." --hidden-import="pytesseract" --hidden-import="pygetwindow" --hidden-import="cv2" --hidden-import="tkinter" --hidden-import="pyperclip"  --hidden-import="pyautogui" main.py
     
     - name: Create Release Package
       run: |
@@ -93,34 +94,7 @@ jobs:
           AutomatePro-Windows.zip
           dist/AutomatePro.exe
         body: |
-          ## CSV LinkedIn URL Matcher - Manual Build
-          
-          **Build Type**: Manual trigger
-          **Version**: ${{ github.event.inputs.version || '1.0.0' }}
-          **Build Date**: ${{ github.run_started_at }}
-          
-          ### Downloads
-          - **Full Package (Recommended)**: `AutomatePro-Windows.zip` - Includes EXE and documentation
-          - **EXE Only**: `AutomatePro.exe` - Standalone executable
-          
-          ### Features
-          - Match LinkedIn URLs between two CSV files
-          - Licensed application with time-based activation
-          - User-friendly GUI interface
-          - Progress tracking and status updates
-          - Export matched results to CSV
-          
-          ### Installation
-          1. Download `AutomatePro-Windows.zip`
-          2. Extract the zip file to your desired location
-          3. Run `AutomatePro.exe`
-          4. Enter your license key when prompted
-          
-          ### System Requirements
-          - Windows 10 or later (64-bit recommended)
-          - No Python installation required
-          - Approximately 50MB free disk space
-          
+          ## AutomatePro Latest Version
           ### Note
           This is a manual build and may be a development version. For stable releases, please use tagged versions.
         draft: false
